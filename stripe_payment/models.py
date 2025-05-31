@@ -14,6 +14,11 @@ class Order(models.Model):
 
     unit_type = models.CharField(max_length=20, choices=UNIT_TYPE_CHOICES)
     address = models.TextField(null=True, blank=True)
+    streetAddress = models.CharField(max_length=255, null=True, blank=True)
+    city = models.CharField(max_length=100, null=True, blank=True)
+    state = models.CharField(max_length=100, null=True, blank=True)
+    postal_code = models.CharField(max_length=20, null=True, blank=True)
+
     unit = models.CharField(max_length=100,null=True, blank=True)
     service_type = models.CharField(max_length=20, choices=SERVICE_TYPE_CHOICES)
     
@@ -46,6 +51,7 @@ class Order(models.Model):
     
     # Consent
     accepted_at = models.DateTimeField(null=True, blank=True)
+    tbd = models.BooleanField(default=False)
 
     # Stripe Relationship
     stripe_session_id = models.CharField(max_length=255, null=True, blank=True)

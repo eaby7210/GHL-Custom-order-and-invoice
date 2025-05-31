@@ -7,7 +7,7 @@ from django.conf import settings
 from django.db import transaction
 import requests 
 from datetime import datetime
-
+from typing import Any
 import json, os
 from django.utils.dateparse import parse_datetime
 from django.contrib.contenttypes.models import ContentType
@@ -329,7 +329,29 @@ class ContactServices:
             ],
         )
 
-      
+    
+    @staticmethod
+    def search_contacts(location_id, query ):
+        """
+        Search contacts by name or email.
+        """
+        token_obj = OAuthServices.get_valid_access_token_obj(location_id)
+        headers = {
+            "Authorization": f"Bearer {token_obj.access_token}",
+            "Content-Type": "application/json",
+            "Version": API_VERSION,
+        }
+
+        url = f"{BASE_URL}/contacts/search"
+        payload = {**query}  # Assuming query is a dict with search parameters
+
+        response = requests.post(url, headers=headers, json=payload)
+        print(f"search result: {json.dumps(response.json(), indent=4)}")
+        if response.status_code == 200:
+        
+            return response.json()
+        else:
+            raise ContactServiceError(f"API request failed: {response.status_code}")
 
                     
     @staticmethod
@@ -352,5 +374,5 @@ class ContactServices:
             raise ContactServiceError(f"API request failed: {response.status_code}")
 
 
-
+    
 

@@ -1,5 +1,6 @@
 from django.core.management.base import BaseCommand
 from core.models import Contact
+from core.services import ContactServices
 import json
 import os
 from django.conf import settings
@@ -77,6 +78,31 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         try:
-            Command.save_contact_matches('1XYDcIkUrFWFYq7nHqF6', 'HBMH06bPfTaKkZx49Y4x')
+           query={
+               "locationId":"n7iGMwfy1T5lZZacxygj",
+                "page": 1,
+                "pageLimit": 20,
+                "filters": [
+                    {
+                    "field": "email",
+                    "operator": "eq",
+                    "value": "kujyr@mailinator.com"
+                    },
+                     {
+                    "field": "phone",
+                    "operator": "eq",
+                    "value": "+16229781609"
+                    },
+                ],
+                "sort": [
+                    {
+                    "field": "dateAdded",
+                    "direction": "desc"
+                    }
+                ]
+
+               }
+           response = ContactServices.search_contacts(location_id="n7iGMwfy1T5lZZacxygj", query=query)
+           print(f"Response: {json.dumps(response, indent=2)}")
         except Exception as e:
             self.stderr.write(self.style.ERROR(f"Error: {str(e)}"))

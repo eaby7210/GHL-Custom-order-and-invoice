@@ -31,18 +31,48 @@ class FormSubmissionAPIView(APIView):
         data = request.data
         # print("Received data:", json.dumps(data, indent=4)) 
         # Common fields
+        # data ={
+        # "unitType": "single",
+        # "streetAddress": "Dolores unde minim i",
+        # "city": "Ullamco molestiae ev",
+        # "postalCode": "Voluptatem quisquam",
+        # "unit": "Voluptate est deleni",
+        # "state": "Montana",
+        # "serviceType": "bundled",
+        # "bundleGroup": "InvestorBootz Deal Accelerator™ Bundle",
+        # "bundleItem": "Ext/Int Photos + Walk Through Video",
+        # "bundlePrice": 180,
+        # "occupancy_occupied": True,
+        # "preferred_datetime": "1995-05-02T18:59",
+        # "contact_name_sched": "Roanna Forbes",
+        # "contact_phone_sched": "+1 (521) 617-7188",
+        # "contact_email_sched": "josafyc@mailinator.com",
+        # "tbd": True,
+        # "acceptedAt": "2025-05-31T18:36:33.457Z"
+        # }
+        streetAddress = data.get("streetAddress")
+        city = data.get("city")
+        state = data.get("state")
+     
+        postal_code = data.get("postalCode")
         unit_type = data.get("unitType")
         address = data.get("address")
+        
         unit = data.get("unit")
         service_type = data.get("serviceType")
-       
+
         accepted_at = parse_datetime(data.get("acceptedAt")) if data.get("acceptedAt") else None
+        tbd = data.get("tbd", False)
         preferred_datetime = parse_datetime(data.get("preferred_datetime")) if data.get("preferred_datetime") else None
 
         # Create order
         order = Order.objects.create(
             unit_type=unit_type,
             address=address,
+            state=state,
+            city=city,
+            postal_code=postal_code,
+            tbd=tbd,
             unit=unit,
             service_type=service_type,
             accepted_at=accepted_at,
@@ -67,23 +97,12 @@ class FormSubmissionAPIView(APIView):
             contact_email_sched=data.get("contact_email_sched"),
             total_price = Decimal(data.get("bundlePrice", 0)) if data.get("bundlePrice") else data.get("a_la_carte_total")
         )
-        contact_name = order.contact_name_sched  
-        contact_phone = order.contact_phone_sched 
-        contact_email = order.contact_email_sched
-        token_obj = OAuthServices.get_valid_access_token_obj()
+        # contact_name = order.contact_name_sched  
+        # contact_phone = order.contact_phone_sched 
+        # contact_email = order.contact_email_sched
+        # token_obj = OAuthServices.get_valid_access_token_obj()
         
-        contact ={
-            "firstName": contact_name.split()[0] if contact_name else "",
-            "lastName": " ".join(contact_name.split()[1:]) if contact_name else "",
-            "name": contact_name,
-            "locationId": token_obj.LocationId,
-            "email": contact_email,
-            "phone": contact_phone,
-            "country": "US",  
-            "type": "customer"  
-        }
-        contact_data = ContactServices.post_contact(token_obj.LocationId, contact)
-        ContactServices.save_contact(contact_data)
+    
 
         # Handle A La Carte services
         if service_type == "a_la_carte":
@@ -153,7 +172,8 @@ class FormSubmissionAPIView(APIView):
 def stripe_webhook(request):
     payload = request.body
     sig_header = request.META['HTTP_STRIPE_SIGNATURE']
-    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
+    # endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
+    endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
 
     try:
         event = stripe.Webhook.construct_event(
@@ -193,11 +213,9 @@ def handle_charge_failed(event):
     print("❌ Charge failed:", json.dumps(event,indent=4))
     # Log failure or alert user
 
-
 def handle_charge_refunded(event):
     print("↩️ Charge refunded:", json.dumps(event,indent=4))
     # Update refund status in your DB
-
 
 def handle_charge_succeeded(event):
     obj = event['data']['object']
@@ -227,8 +245,7 @@ def handle_charge_succeeded(event):
 def handle_charge_updated(event):
     handle_charge_succeeded(event)
     # Optional: update metadata, receipt URL, etc.
-    
-    
+      
 def handle_checkout_session_completed(event):
     obj = event['data']['object']
     session_id = obj["id"]
@@ -236,15 +253,51 @@ def handle_checkout_session_completed(event):
     if order_obj:
      
 
+        contact_name = order_obj.contact_name_sched
         contact_phone = re.sub(r"[^\d+]", "", str(order_obj.contact_phone_sched))
         contact_email = order_obj.contact_email_sched
         token_obj = OAuthServices.get_valid_access_token_obj()
-        
-        contact =Contact.objects.filter(phone=contact_phone, email=contact_email).first()
-        print(f"Contact filtered: {contact_phone}, {contact_email}")
-        print(f"Contact found: {contact}")
+        search_response = ContactServices.search_contacts(token_obj.LocationId,query={
+             "locationId":"n7iGMwfy1T5lZZacxygj",
+                "page": 1,
+                "pageLimit": 20,
+                "filters": [
+                    {
+                    "field": "email",
+                    "operator": "eq",
+                    "value": "kujyr@mailinator.com"
+                    },
+                     {
+                    "field": "phone",
+                    "operator": "eq",
+                    "value": "+16229781609"
+                    },
+                ],
+                "sort": [
+                    {
+                    "field": "dateAdded",
+                    "direction": "desc"
+                    }
+                ]
+        })
+        if len(search_response.get("contacts", [])) > 0:
+            contact_data = search_response["contacts"][0]
+            print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
+        else:
+            contact ={
+            "firstName": contact_name.split()[0] if contact_name else "",
+            "lastName": " ".join(contact_name.split()[1:]) if contact_name else "",
+            "name": contact_name,
+            "locationId": token_obj.LocationId,
+            "email": contact_email,
+            "phone": contact_phone,
+            "country": "US",  
+            "type": "customer"  
+            }
+            contact_data = ContactServices.post_contact(token_obj.LocationId, contact)
+            ContactServices.save_contact(contact_data)
         invoice_payload = build_invoice_payload(
-            order_obj, contact, token_obj.LocationId
+            order_obj, contact=contact_data, location_id=token_obj.LocationId
         )
         response = InvoiceServices.post_invoice(token_obj.LocationId, invoice_payload)
         print(f"Invoice response: {json.dumps(response, indent=4)}")
@@ -266,7 +319,6 @@ def handle_checkout_session_completed(event):
     )
     
     return session_obj
-
 
 def build_invoice_payload(order, contact, location_id):
     """
@@ -326,6 +378,14 @@ def build_invoice_payload(order, contact, location_id):
             description=order.bundle_group,
             price=order.total_price
         ))
+    address={
+            "addressLine1": order.streetAddress or "",
+            "addressLine2": order.unit or "",
+            "city": order.city or "",
+            "state": order.state or "",
+            "countryCode": "US",
+            "postalCode": order.postal_code or ""
+        }
     invoice_data = {
         "altId": location_id,
         "altType": "location",
@@ -335,6 +395,7 @@ def build_invoice_payload(order, contact, location_id):
             "name": order.contact_name_sched or "",
             "phoneNo": order.contact_phone_sched or "",
             "email": order.contact_email_sched or "",
+            "address": address,
          
         },
         # "customValues": [],
@@ -343,13 +404,13 @@ def build_invoice_payload(order, contact, location_id):
         "termsNotes": "<p>This is a default terms.</p>",
         "title": "INVOICE",
         "contactDetails": {
-            "id": contact.id,
+            "id": contact.get("id"),
             "name": order.contact_name_sched or "",
             "phoneNo": re.sub(r"[^\d+]", "", str(order.contact_phone_sched)) or "",
             "email": order.contact_email_sched or "",
             "additionalEmails": [],
             "companyName": "",
-            "address": {},
+            "address": address,
             "customFields": []
         },
         "invoiceNumber": f"{order.stripe_session_id}",
@@ -370,7 +431,6 @@ def build_invoice_payload(order, contact, location_id):
     }
     # print("Invoice data payload:", json.dumps(invoice_data, indent=4))
     return invoice_data
-
 
 def send_invoice(invoice_data):
     oauth_obj = OAuthToken.objects.get(LocationId=invoice_data.get("altId"))
