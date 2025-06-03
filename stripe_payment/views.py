@@ -2,11 +2,13 @@
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import viewsets, mixins
 from rest_framework import status
 from .models import (
     Order, ALaCarteService, ALaCarteAddOn, ALaCarteSubMenu,
     StripeCharge, CheckoutSession
 )
+from .serializer import OrderSerializer
 from core.services import OAuthServices, ContactServices
 from core.models import Contact, OAuthToken
 from django.utils.dateparse import parse_datetime
@@ -165,8 +167,17 @@ class FormSubmissionAPIView(APIView):
                 "error": str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
     
-
-
+    def get(self, request,stripe_session_id):
+        try:
+            token_obj = OAuthServices.get_valid_access_token_obj()
+            order = Order.objects.get(stripe_session_id=stripe_session_id)
+            response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+            if not response:
+                print(json.dumps(response, indent=4))
+                return Response({"error": "Invoice not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(response, status=status.HTTP_200_OK)
+        except Order.DoesNotExist:
+            return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
 
 @csrf_exempt
 def stripe_webhook(request):
@@ -301,6 +312,10 @@ def handle_checkout_session_completed(event):
         )
         response = InvoiceServices.post_invoice(token_obj.LocationId, invoice_payload)
         print(f"Invoice response: {json.dumps(response, indent=4)}")
+        if response:
+            order_obj.location_id = token_obj.LocationId
+            order_obj.invoice_id = response.get("_id")
+            order_obj.save()
         send_invoice(response)
         record_payment(response)
     session_obj ,created = CheckoutSession.objects.update_or_create(
@@ -462,3 +477,12 @@ def record_payment(invoice_data):
     }
     response = InvoiceServices.record_payment(invoice_data.get("altId"), invoice_data.get("_id"), payload)
     print(f"Record payment response: {json.dumps(response, indent=4)}")
+    
+    
+
+
+class OrderRetrieveView(viewsets.GenericViewSet, mixins.RetrieveModelMixin):
+    queryset = Order.objects.prefetch_related('a_la_carte_services').all()
+    serializer_class = OrderSerializer
+    lookup_field = "stripe_session_id"
+

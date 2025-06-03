@@ -24,6 +24,21 @@ class InvoiceServices:
             return None
     
     @staticmethod
+    def get_invoice(location_id, invoice_id):
+        headers = OAuthServices.get_valid_headers(location_id)
+        querystring = {"altId":location_id,"altType":"location"}
+        url = f"https://services.leadconnectorhq.com/invoices/{invoice_id}"
+        response = requests.get(url, headers=headers, params=querystring)
+
+        if 200 <= response.status_code < 300:
+            print(f"✅ Invoice {invoice_id} retrieved successfully.")
+            # print(json.dumps(response.json(), indent=4))
+            return response.json()
+        else:
+            print(f"❌ Failed to retrieve Invoice {invoice_id}: {response.status_code} - {response.text}")
+            return None
+    
+    @staticmethod
     def send_invoice(location_id, invoice_id, data):
         headers = OAuthServices.get_valid_headers(location_id)
         url = f"https://services.leadconnectorhq.com/invoices/{invoice_id}/send"

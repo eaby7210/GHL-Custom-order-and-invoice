@@ -55,9 +55,10 @@ class Order(models.Model):
 
     # Stripe Relationship
     stripe_session_id = models.CharField(max_length=255, null=True, blank=True)
+    location_id = models.CharField(max_length=50, null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
-
+    invoice_id = models.CharField(max_length=50, null=True, blank=True)
 
 class ALaCarteService(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="a_la_carte_services")
