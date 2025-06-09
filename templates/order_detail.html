@@ -1,0 +1,27 @@
+{% comment %} INVOICE FORMATTED CONTENT FOR WYSIWYG FIELD {% endcomment %}
+
+
+
+
+
+
+<p><strong>Product Items:</strong></p>
+<ul>
+  {% for item in invoice_data.items %}
+    <li>
+      <strong>{{ item.name }}</strong><br />
+      {% if item.description %}
+        <em>{{ item.description }}</em><br />
+      {% endif %}
+      Quantity: {{ item.qty }}<br />
+      Price: {{ item.amount }} {{ item.currency }}
+    </li>
+  {% empty %}
+    <li><em>No items added</em></li>
+  {% endfor %}
+</ul>
+
+{% if invoice_data.termsNotes %}
+  <p><strong>Terms &amp; Notes:</strong></p>
+  {{ invoice_data.termsNotes|safe }}
+{% endif %}

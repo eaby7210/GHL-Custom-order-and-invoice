@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from decouple import config
+from celery.schedules import crontab
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -37,6 +38,12 @@ else:
     STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY')
     STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY')
 STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET')
+
+NOTARY_TEST = False
+if NOTARY_TEST:
+    NOTARY_API_KEY = config('NOTARY_TEST_API_KEY')
+else:
+    NOTARY_API_KEY = config('NOTARY_LIVE_API_KEY')
 
 DEBUG = True
 
@@ -89,7 +96,7 @@ ROOT_URLCONF = 'dj_IBstripe.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': ["templates"],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -155,3 +162,52 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+CELERY_BEAT_SCHEDULE = {
+    'example_task': {
+        'task': 'stripe_payment.tasks.example_task',
+        'schedule': crontab(hour=0, minute=0),
+        'args': (),
+    },
+    # 'sample_beat_task': {
+    #     'task': 'stripe_payment.tasks.sample_beat_task',
+    #     # 'schedule': crontab(second='*/5'),  
+    #     # Runs every 5 seconds
+    #     'schedule': 5,
+    #     'args': (),
+    # },
+    'pull_clients': {
+        'task': 'stripe_payment.tasks.pull_clients',
+        'schedule': 300,
+        'args': (),
+    },
+}
+
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'celery': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}

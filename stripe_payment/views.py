@@ -1,12 +1,13 @@
 # views.py
-
+from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import viewsets, mixins
 from rest_framework import status
 from .models import (
     Order, ALaCarteService, ALaCarteAddOn, ALaCarteSubMenu,
-    StripeCharge, CheckoutSession
+    StripeCharge, CheckoutSession, NotaryClientCompany,
+    StripeWebhookEventLog
 )
 from .serializer import OrderSerializer
 from core.services import OAuthServices, ContactServices
@@ -15,7 +16,7 @@ from django.utils.dateparse import parse_datetime
 from decimal import Decimal
 import json
 from .utils import create_stripe_session
-from .services import InvoiceServices
+from .services import InvoiceServices, NotaryDashServices
 import stripe
 # from stripe.error import SignatureVerificationError
 from stripe._error import SignatureVerificationError
@@ -24,7 +25,9 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import make_aware
+from django.template.loader import render_to_string
 import datetime
+
 import re
 from django.utils.timezone import now
 
@@ -97,6 +100,7 @@ class FormSubmissionAPIView(APIView):
             contact_name_sched=data.get("contact_name_sched"),
             contact_phone_sched=data.get("contact_phone_sched"),
             contact_email_sched=data.get("contact_email_sched"),
+            company_name=data.get("company_name_sched"),
             total_price = Decimal(data.get("bundlePrice", 0)) if data.get("bundlePrice") else data.get("a_la_carte_total")
         )
         # contact_name = order.contact_name_sched  
@@ -124,7 +128,8 @@ class FormSubmissionAPIView(APIView):
                     prompt=item.get("prompt"),
                     total_price=Decimal(item.get("total_price", 0)),
                     addons_price=Decimal(item.get("addons_price", 0)),
-                    submenu_input=item.get("submenu_input")
+                    submenu_input=item.get("submenu_input"),
+                    reduced_names=item.get("reduced_name", ""),
                 )
 
                 
@@ -138,10 +143,13 @@ class FormSubmissionAPIView(APIView):
                 # Submenu
                 submenu = item.get("submenu")
                 if submenu:
+                    print(f"Submenu for service {service.name}: {json.dumps(submenu, indent=4)}")
                     ALaCarteSubMenu.objects.create(
                         service=service,
                         option=submenu.get("option"),
                         label=submenu.get("label"),
+                        prompt_label=submenu.get("prompt"),
+                        prompt_value=submenu.get("prompt_value"),
                         amount = Decimal(submenu.get("amount") or submenu.get("option_price") or 0)
                     )
         frontend_domain = request.headers.get("Origin") 
@@ -167,24 +175,38 @@ class FormSubmissionAPIView(APIView):
                 "error": str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
     
-    def get(self, request,stripe_session_id):
+    def get(self, request, stripe_session_id):
         try:
             token_obj = OAuthServices.get_valid_access_token_obj()
             order = Order.objects.get(stripe_session_id=stripe_session_id)
             response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+
             if not response:
-                print(json.dumps(response, indent=4))
-                return Response({"error": "Invoice not found"}, status=status.HTTP_404_NOT_FOUND)
-            return Response(response, status=status.HTTP_200_OK)
+                return self._handle_response(request, {"error": "Invoice not found"}, status.HTTP_404_NOT_FOUND)
+
+            return self._handle_response(request, response, status.HTTP_200_OK)
+
         except Order.DoesNotExist:
-            return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+            return self._handle_response(request, {"error": "Order not found"}, status.HTTP_404_NOT_FOUND)
+
+    def _handle_response(self, request, data, status_code):
+        # If HTML is expected (Browsable API), render custom template
+        # print(f"format: {request.accepted_renderer.format}")
+        # print(f"accepted_media_type: {request.accepted_media_type}")
+        # print(f"data: {json.dumps(data, indent=4)}")
+        if request.accepted_media_type == 'text/html':
+            data["items"] = data.pop("invoiceItems", data.get("items", []))
+
+            return render(request, "order_detail.html", {"invoice_data": data}, status=status_code)
+        # Else, return JSON response
+        return Response(data, status=status_code)
 
 @csrf_exempt
 def stripe_webhook(request):
     payload = request.body
     sig_header = request.META['HTTP_STRIPE_SIGNATURE']
-    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
-    # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
+    # endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
+    endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
 
     try:
         event = stripe.Webhook.construct_event(
@@ -196,12 +218,24 @@ def stripe_webhook(request):
     except SignatureVerificationError as e:
         # Invalid signature
         return HttpResponse(status=400)
-
+    event_id = event.get('id', None)
+    event_created = event.get('created', None)
     # Process the event type
     event_type = event['type']
     data_object = event['data']['object']
+    evt_log = StripeWebhookEventLog.objects.filter(event_id=event_id).first()
+    if evt_log:
+        print(f"Event {event_id} already processed at {evt_log.created_at}")
+        return HttpResponse(status=200)
+    StripeWebhookEventLog.objects.create(
+        event_id=event_id,
+        event_type=event_type,
+        created_at=make_aware(datetime.datetime.fromtimestamp(event_created)) if event_created else None,
+        event_data=json.dumps(data_object, indent=4),
+    )
+    
 
-    print(f"Received Stripe event: {event_type}")
+    # print(f"Received Stripe event: {payload} event: {json.dumps(event, indent=4)}")
     # print("Event: \n", json.dumps(event,indent=4))
     if event_type == 'charge.succeeded':
         handle_charge_succeeded(event)
@@ -213,7 +247,7 @@ def stripe_webhook(request):
         handle_charge_updated(event)
     elif event_type == 'checkout.session.completed':
         session_obj : CheckoutSession= handle_checkout_session_completed(event)
-        print(f"Checkout session completed: {session_obj.session_id}")
+        # print(f"Checkout session completed: {session_obj.session_id}")
     else:
         print(f"Unhandled event type: {event_type}")
 
@@ -229,7 +263,10 @@ def handle_charge_refunded(event):
     # Update refund status in your DB
 
 def handle_charge_succeeded(event):
+    import time
+    time.sleep(1)  # Simulate processing delay
     obj = event['data']['object']
+    # print(f"Stripe charge suceed: {json.dumps(event, indent=4)}")
     StripeCharge.objects.update_or_create(
         charge_id=obj['id'],
         defaults={
@@ -254,16 +291,18 @@ def handle_charge_succeeded(event):
     )
 
 def handle_charge_updated(event):
+    import time
+    time.sleep(1)
     handle_charge_succeeded(event)
     # Optional: update metadata, receipt URL, etc.
       
 def handle_checkout_session_completed(event):
+    # print(f"Checkout session completed: {json.dumps(event, indent=4)}")
     obj = event['data']['object']
     session_id = obj["id"]
     order_obj = Order.objects.filter(stripe_session_id=session_id).first()
+    
     if order_obj:
-     
-
         contact_name = order_obj.contact_name_sched
         contact_phone = re.sub(r"[^\d+]", "", str(order_obj.contact_phone_sched))
         contact_email = order_obj.contact_email_sched
@@ -276,12 +315,12 @@ def handle_checkout_session_completed(event):
                     {
                     "field": "email",
                     "operator": "eq",
-                    "value": "kujyr@mailinator.com"
+                    "value": contact_email
                     },
                      {
                     "field": "phone",
                     "operator": "eq",
-                    "value": "+16229781609"
+                    "value": contact_phone
                     },
                 ],
                 "sort": [
@@ -293,7 +332,7 @@ def handle_checkout_session_completed(event):
         })
         if len(search_response.get("contacts", [])) > 0:
             contact_data = search_response["contacts"][0]
-            print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
+            # print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
         else:
             contact ={
             "firstName": contact_name.split()[0] if contact_name else "",
@@ -307,6 +346,7 @@ def handle_checkout_session_completed(event):
             }
             contact_data = ContactServices.post_contact(token_obj.LocationId, contact)
             ContactServices.save_contact(contact_data)
+        # contact_data = { "id":"1233"}
         invoice_payload = build_invoice_payload(
             order_obj, contact=contact_data, location_id=token_obj.LocationId
         )
@@ -335,7 +375,127 @@ def handle_checkout_session_completed(event):
     
     return session_obj
 
-def build_invoice_payload(order, contact, location_id):
+def build_notary_order(order :Order, inv_data, prd_name):
+    
+    """
+    Build Notary order payload based on given order and contact.
+
+    """
+    company = NotaryClientCompany.objects.filter(
+        company_name=inv_data.get("businessDetails", {}).get("name")
+    ).order_by('-updated_at', '-created_at').first()
+    if company:
+        # print(f"Found existing Notary company: {company.company_name} (ID: {company.id})")
+        company_id=company.id
+        owner_id = company.owner_id
+    else:
+        print("No existing Notary company found, creating a new one.")
+        
+        notary_client = {
+                "company_name":  inv_data.get("businessDetails", {}).get("name", ""),
+                # "owner_id": 11,
+                "parent_company_id": 78312,
+                "address": {
+                    "address_1": inv_data.get("businessDetails", {}).get("address", {}).get("addressLine1", ""),
+                    # "address_2": "provident",
+                    "state": inv_data.get("businessDetails", {}).get("address", {}).get("state", ""),
+                    "city": inv_data.get("businessDetails", {}).get("address", {}).get("city", ""),
+                    "zip": inv_data.get("businessDetails", {}).get("address", {}).get("postalCode", ""),
+                }
+            }
+        
+        response = NotaryDashServices.create_client(notary_client)
+        if response:
+            company = response.get("data",None)
+            company_id = response.get("data",None).get("id")
+            owner_id = response.get("data",None).get("owner_id")
+            # print(json.dumps(response, indent=4))
+            NotaryClientCompany.objects.update_or_create(
+                    id=company["id"],
+                    defaults={
+                        "owner_id": company["owner_id"],
+                        "parent_company_id": company["parent_company_id"],
+                        "type": company["type"],
+                        "company_name": company["company_name"].strip(),
+                        "parent_company_name": company.get("parent_company_name"),
+                        "attr": company["attr"],
+                        "address": company.get("address"),
+                        "deleted_at": make_aware(datetime.datetime.strptime(company["deleted_at"], "%Y-%m-%d %H:%M:%S")) if company["deleted_at"] else None,
+                        "created_at": make_aware(datetime.datetime.strptime(company["created_at"], "%Y-%m-%d %H:%M:%S")),
+                        "updated_at": make_aware(datetime.datetime.strptime(company["updated_at"], "%Y-%m-%d %H:%M:%S")),
+                        "active": company["active"],
+                    }
+                )
+    html_content = render_to_string("order_detail.html", context={"invoice_data":inv_data})
+    notary_product={
+        "client_id": company_id,
+        "owner_id": owner_id,
+        "name": prd_name,
+        "pay_to_notary": 0,
+        "charge_client": float(order.total_price) if order.total_price else 0,
+        "scanbacks_required": False,
+        "attr": {
+            "additional_instructions": html_content,
+            # "scanbacks_instructions": "alias",
+            },
+        }
+    if response:
+        prd_response = NotaryDashServices.create_products(notary_product)
+        if prd_response:
+            prd = prd_response.get("data", None)
+    notary_order = {
+        "client_id": company_id,
+        # "client_contact_id": 15,
+        "location": {
+            "when": "at",
+            "appt_time": order.preferred_datetime.isoformat() if order.preferred_datetime else None,
+            "address": {
+                "address_1": order.streetAddress or "",
+                "address_2": order.unit or "",
+                "city": order.city or "",
+                "zip": order.postal_code or "",
+                "state": order.state or "",
+            }
+            },
+            # "property_address": [
+            #     "alias"
+            # ],
+            "signer": {
+                "first_name": order.contact_name_sched.split()[0] if order.contact_name_sched else "",
+                "last_name": order.contact_name_sched.split()[1] if order.contact_name_sched else "",
+                "email": order.contact_email_sched or "",
+            },
+            # "cosigner": {
+            #     "first_name": "Mary",
+            #     "last_name": "TestSigner",
+            #     "email": "me@test.com"
+            # },
+            "product": {
+                "parent_id": prd.get("id") if prd_response else None,
+                "name": prd.get("name") if prd_response else prd_name,
+                "pay_to_notary": prd.get("pay_to_notary", 0) if prd_response else 0,
+                "charge_client": prd.get("charge_client", order.total_price) if prd_response else order.total_price,
+                "scanbacks_required": False
+            },
+            # "attr": {
+            #     "lender": "possimus",
+            #     "file_number": "sapiente",
+            #     "loan_number": "natus",
+            #     "special_instructions": "voluptate",
+            #     "delivery_instructions": "impedit"
+            # }
+        }
+    
+    ord_response = NotaryDashServices.create_order(notary_order)
+    print("Notary order response:", json.dumps(ord_response, indent=4))
+    if ord_response and ord_response.get("data"):
+        inv_data["invoiceNumber"] = ord_response.get("data", {}).get("id")
+    return ord_response
+        
+
+
+
+def build_invoice_payload(order , contact, location_id):
     """
     Build JSON payload for invoice based on given order.
     """
@@ -360,9 +520,12 @@ def build_invoice_payload(order, contact, location_id):
         }
 
     items = []
+    notary_product_names=[]
     if order.service_type == "a_la_carte":
+        
         for service in order.a_la_carte_services.all():
             # Main service item
+            notary_product_names.append(service.name)
             items.append(build_item(
                 name=service.name,
                 description=service.description,
@@ -375,7 +538,7 @@ def build_invoice_payload(order, contact, location_id):
                 submenu = service.submenu
                 items.append(build_item(
                     name=f"{service.name} - {submenu.label}",
-                    description=submenu.option,
+                    description=f"{submenu.option} - (Prompt: {submenu.prompt_label}- {submenu.prompt_value})",
                     price=submenu.amount
                 ))
 
@@ -388,11 +551,13 @@ def build_invoice_payload(order, contact, location_id):
                     price=addon.price
                 ))
     elif order.service_type == "bundled":
+        notary_product_names.append(order.bundle_item)
         items.append(build_item(
             name=order.bundle_item,
             description=order.bundle_group,
             price=order.total_price
         ))
+    notary_product_names = ", ".join(notary_product_names)
     address={
             "addressLine1": order.streetAddress or "",
             "addressLine2": order.unit or "",
@@ -404,10 +569,10 @@ def build_invoice_payload(order, contact, location_id):
     invoice_data = {
         "altId": location_id,
         "altType": "location",
-        "name": f"Invoice for {order.get_service_type_display()} Order",
+        "name": f"{order.company_name} - {order.get_service_type_display()} ",
         "businessDetails": {
      
-            "name": order.contact_name_sched or "",
+            "name": order.company_name or "",
             "phoneNo": order.contact_phone_sched or "",
             "email": order.contact_email_sched or "",
             "address": address,
@@ -417,7 +582,7 @@ def build_invoice_payload(order, contact, location_id):
         "currency": "USD",
         "items": items,
         "termsNotes": "<p>This is a default terms.</p>",
-        "title": "INVOICE",
+        "title": f"Invoice for {order.get_service_type_display()} Order - {order.company_name}",
         "contactDetails": {
             "id": contact.get("id"),
             "name": order.contact_name_sched or "",
@@ -444,7 +609,8 @@ def build_invoice_payload(order, contact, location_id):
         },
         "attachments": []
     }
-    # print("Invoice data payload:", json.dumps(invoice_data, indent=4))
+    invoice_data = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names)
+    print("Invoice data payload:", json.dumps(invoice_data, indent=4))
     return invoice_data
 
 def send_invoice(invoice_data):
@@ -478,7 +644,7 @@ def record_payment(invoice_data):
     response = InvoiceServices.record_payment(invoice_data.get("altId"), invoice_data.get("_id"), payload)
     print(f"Record payment response: {json.dumps(response, indent=4)}")
     
-    
+ 
 
 
 class OrderRetrieveView(viewsets.GenericViewSet, mixins.RetrieveModelMixin):

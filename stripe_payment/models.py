@@ -49,6 +49,7 @@ class Order(models.Model):
     contact_phone_sched = models.CharField(max_length=20,null=True, blank=True)
     contact_email_sched = models.EmailField(null=True, blank=True)
     
+    company_name = models.CharField(max_length=255, null=True, blank=True)
     # Consent
     accepted_at = models.DateTimeField(null=True, blank=True)
     tbd = models.BooleanField(default=False)
@@ -70,7 +71,7 @@ class ALaCarteService(models.Model):
     prompt = models.TextField(null=True, blank=True)
     total_price = models.DecimalField(max_digits=10, decimal_places=2)
     addons_price = models.DecimalField(max_digits=10, decimal_places=2)
-
+    reduced_names = models.CharField(max_length=255, null=True, blank=True)
     # Optional input (like maintenance descriptions)
     submenu_input = models.JSONField(null=True, blank=True)
 
@@ -89,9 +90,12 @@ class ALaCarteAddOn(models.Model):
 
 class ALaCarteSubMenu(models.Model):
     service = models.OneToOneField(ALaCarteService, on_delete=models.CASCADE, related_name="submenu")
-    option = models.CharField(max_length=100)
-    label = models.CharField(max_length=255)
+    option = models.CharField(max_length=100, null=True, blank=True)
+    label = models.CharField(max_length=255,null=True, blank=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    prompt_label = models.CharField(max_length=255, null=True, blank=True, default=None)
+    prompt_value = models.TextField(null=True, blank=True, default=None) 
+    
 
     def __str__(self):
         return f"Submenu for {self.service.name}"
@@ -121,6 +125,17 @@ class StripeCharge(models.Model):
         return self.charge_id
 
 
+class StripeWebhookEventLog(models.Model):
+    event_id = models.CharField(max_length=100, primary_key=True)
+    event_type = models.CharField(max_length=50)
+    event_data = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    # processed = models.BooleanField(default=False)
+    # error_message = models.TextField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.event_type} - {self.event_id}"
+
 class CheckoutSession(models.Model):
     session_id = models.CharField(max_length=100, primary_key=True)
     payment_intent = models.CharField(max_length=100, null=True, blank=True)
@@ -136,8 +151,6 @@ class CheckoutSession(models.Model):
     def __str__(self):
         return self.session_id
 
-
-from django.db import models
 
 class Invoice(models.Model):
     STATUS_CHOICES = [
@@ -188,3 +201,67 @@ class Discount(models.Model):
     class Meta:
         db_table = 'discount'
 
+class NotaryClientCompany(models.Model):
+    id = models.BigIntegerField(primary_key=True)  # Matches NotaryDash ID
+    owner_id = models.BigIntegerField()
+    parent_company_id = models.BigIntegerField()
+    
+    type = models.CharField(max_length=50)  # e.g., 'client'
+    company_name = models.CharField(max_length=255)
+    parent_company_name = models.CharField(max_length=255, null=True, blank=True)
+
+    attr = models.JSONField(default=dict, blank=True)  # Stores dynamic keys like phone, accounting_email
+
+    address = models.TextField(null=True, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+    
+    active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.company_name
+
+
+class NotaryUser(models.Model):
+    id = models.BigIntegerField(primary_key=True)
+    
+    email = models.EmailField()
+    email_unverified = models.BooleanField(null=True, blank=True)
+    
+    first_name = models.CharField(max_length=255)
+    last_name = models.CharField(max_length=255)
+    name = models.CharField(max_length=255)
+
+    photo_url = models.URLField(null=True, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+    last_ip = models.GenericIPAddressField(null=True, blank=True)
+
+    last_company = models.ForeignKey(
+        NotaryClientCompany,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='users'
+    )
+
+    attr = models.JSONField(default=dict, blank=True)
+    disabled = models.BooleanField(null=True, blank=True)
+    type = models.CharField(max_length=50)
+    country_code = models.CharField(max_length=10, null=True, blank=True)
+    tz = models.CharField(max_length=100, null=True, blank=True)
+
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    has_roles = models.JSONField(default=list, blank=True)
+
+    # Pivot fields
+    pivot_active = models.BooleanField(default=True)
+    pivot_role_id = models.IntegerField(null=True, blank=True)
+    pivot_company = models.CharField(max_length=255, null=True, blank=True)
+
+    def __str__(self):
+        return self.email

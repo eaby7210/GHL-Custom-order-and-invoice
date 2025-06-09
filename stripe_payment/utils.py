@@ -43,6 +43,10 @@ def create_stripe_session(order, domain):
                     "submenu_label": service.submenu.label,
                     "submenu_amount": str(service.submenu.amount)
                 }
+                if service.submenu.prompt_label:
+                    print(service.submenu.prompt_label, service.submenu.prompt_value)
+                    submenu_metadata["submenu_prompt"] = service.submenu.prompt_label
+                    submenu_metadata["submenu_prompt_value"] = service.submenu.prompt_value
 
             # Combine metadata
             combined_metadata = {
