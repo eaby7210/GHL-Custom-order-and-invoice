@@ -1,3 +1,36 @@
+{% comment %} INVOICE FORMATTED CONTENT FOR WYSIWYG FIELD {% endcomment %}
+
+<p><strong>Product Items:</strong></p>
+<ul>
+  {% for item in invoice_data.items %}
+    <li>
+      <strong>{{ item.name }}</strong><br />
+      {% if item.description %}
+        <em>{{ item.description }}</em><br />
+      {% endif %}
+      Quantity: {{ item.qty }}<br />
+      {% comment %} Price: {{ item.amount }} {{ item.currency }} {% endcomment %}
+    </li>
+  {% empty %}
+    <li><em>No items added</em></li>
+  {% endfor %}
+</ul>
+
+
+
+{# Occupancy & Access section #}
+<p><strong> Occupancy Status: </strong>
+  {% if order.ocupancy_vacant %}
+  Vacant
+  {% elif order.occupancy_occupied%}
+  Occupied
+  {%else%}
+    Not specified
+  {%endif%}
+</p>
+
+
+
 <p><strong>Access Options:</strong></p>
 <ul>
   {% if order.access_lock_box %}

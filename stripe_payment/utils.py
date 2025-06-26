@@ -67,7 +67,7 @@ def create_stripe_session(order, domain):
                 "quantity": 1,
             })
 
-    print("Creating Stripe session with line items:", json.dumps(line_items, indent=4))
+    # print("Creating Stripe session with line items:", json.dumps(line_items, indent=4))
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         mode="payment",
@@ -76,12 +76,14 @@ def create_stripe_session(order, domain):
         cancel_url=f"{domain}?status=cancel",
         metadata={
             "order_id": str(order.id),
-            "contact_name": order.contact_name_sched or "",
+            "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else ""  ,
             "contact_phone": order.contact_phone_sched or "",
             "contact_email": order.contact_email_sched or "",
             "preferred_datetime": order.preferred_datetime.isoformat() if order.preferred_datetime else "",
             "unit": order.unit or ""
         },
+        
+      
     )
 
     return session

@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import viewsets, mixins
 from rest_framework import status
-from .models import (
+from stripe_payment.models import (
     Order, ALaCarteService, ALaCarteAddOn, ALaCarteSubMenu,
     StripeCharge, CheckoutSession, NotaryClientCompany,
     StripeWebhookEventLog
@@ -34,27 +34,7 @@ from django.utils.timezone import now
 class FormSubmissionAPIView(APIView):
     def post(self, request):
         data = request.data
-        # print("Received data:", json.dumps(data, indent=4)) 
-        # Common fields
-        # data ={
-        # "unitType": "single",
-        # "streetAddress": "Dolores unde minim i",
-        # "city": "Ullamco molestiae ev",
-        # "postalCode": "Voluptatem quisquam",
-        # "unit": "Voluptate est deleni",
-        # "state": "Montana",
-        # "serviceType": "bundled",
-        # "bundleGroup": "InvestorBootz Deal Accelerator™ Bundle",
-        # "bundleItem": "Ext/Int Photos + Walk Through Video",
-        # "bundlePrice": 180,
-        # "occupancy_occupied": True,
-        # "preferred_datetime": "1995-05-02T18:59",
-        # "contact_name_sched": "Roanna Forbes",
-        # "contact_phone_sched": "+1 (521) 617-7188",
-        # "contact_email_sched": "josafyc@mailinator.com",
-        # "tbd": True,
-        # "acceptedAt": "2025-05-31T18:36:33.457Z"
-        # }
+        print("Received data:", json.dumps(data, indent=4)) 
         streetAddress = data.get("streetAddress")
         city = data.get("city")
         state = data.get("state")
@@ -65,11 +45,13 @@ class FormSubmissionAPIView(APIView):
         
         unit = data.get("unit")
         service_type = data.get("serviceType")
+        occupancy_status = data.get("occupancy_status")
 
         accepted_at = parse_datetime(data.get("acceptedAt")) if data.get("acceptedAt") else None
         tbd = data.get("tbd", False)
         preferred_datetime = parse_datetime(data.get("preferred_datetime")) if data.get("preferred_datetime") else None
-
+        if preferred_datetime is not None:
+            preferred_datetime = make_aware(preferred_datetime)
         # Create order
         order = Order.objects.create(
             unit_type=unit_type,
@@ -84,8 +66,9 @@ class FormSubmissionAPIView(APIView):
             preferred_datetime=preferred_datetime,
             bundle_group=data.get("bundleGroup"),
             bundle_item=data.get("bundleItem"),
-            occupancy_vacant=data.get("occupancy_vacant", False),
-            occupancy_occupied=data.get("occupancy_occupied", False),
+         
+            occupancy_vacant = occupancy_status == "vacant",
+            occupancy_occupied = occupancy_status == "occupied",
             access_lock_box=data.get("access_lock_box", False),
             lock_box_code=data.get("lock_box_code"),
             lock_box_location=data.get("lock_box_location"),
@@ -97,16 +80,26 @@ class FormSubmissionAPIView(APIView):
             community_access_instructions=data.get("community_access_instructions"),
             access_door_code=data.get("access_door_code", False),
             door_code_value=data.get("door_code_value"),
-            contact_name_sched=data.get("contact_name_sched"),
+            contact_first_name_sched=data.get("contact_first_name_sched"),
+            contact_last_name_sched=data.get("contact_last_name_sched"),
             contact_phone_sched=data.get("contact_phone_sched"),
             contact_email_sched=data.get("contact_email_sched"),
-            company_name=data.get("company_name_sched"),
+            
+            contact_first_name=data.get("contact_first_name"),
+            contact_last_name=data.get("contact_last_name"),
+            contact_phone=data.get("contact_phone"),
+            
+            cosigner_first_name=data.get("cosigner_first_name"),
+            cosigner_last_name=data.get("cosigner_last_name"),
+            cosigner_phone=data.get("cosigner_phone"),
+            cosigner_email=data.get("cosigner_email"),
+            
+            sp_instruction=data.get("special_instructions"),
+            
+            company_name=data.get("company_name"),
             total_price = Decimal(data.get("bundlePrice", 0)) if data.get("bundlePrice") else data.get("a_la_carte_total")
         )
-        # contact_name = order.contact_name_sched  
-        # contact_phone = order.contact_phone_sched 
-        # contact_email = order.contact_email_sched
-        # token_obj = OAuthServices.get_valid_access_token_obj()
+  
         
     
 
@@ -133,12 +126,14 @@ class FormSubmissionAPIView(APIView):
                 )
 
                 
-                for addon_name, addon_price in item.get("addOns", {}).items():
+                for addon_key, addon_data in item.get("addOns", {}).items():
+                    # addon_data is expected to be a dict with 'label' and 'price'
                     ALaCarteAddOn.objects.create(
                         service=service,
-                        name=addon_name,
-                        price=Decimal(addon_price)
-                    )
+                        key=addon_key,
+                        name=addon_data.get("label", addon_key),
+                        price=Decimal(addon_data.get("price", 0))
+    )
 
                 # Submenu
                 submenu = item.get("submenu")
@@ -197,7 +192,7 @@ class FormSubmissionAPIView(APIView):
         if request.accepted_media_type == 'text/html':
             data["items"] = data.pop("invoiceItems", data.get("items", []))
 
-            return render(request, "order_detail.html", {"invoice_data": data}, status=status_code)
+            return render(request, "order_product_detail.html", {"invoice_data": data}, status=status_code)
         # Else, return JSON response
         return Response(data, status=status_code)
 
@@ -247,12 +242,26 @@ def stripe_webhook(request):
         handle_charge_updated(event)
     elif event_type == 'checkout.session.completed':
         session_obj : CheckoutSession= handle_checkout_session_completed(event)
-        # print(f"Checkout session completed: {session_obj.session_id}")
+        print(f"Checkout session completed: {json.dumps(event, indent=4)}")
+        print(f"Checkout session object: {json.dumps(session_obj, indent=4)}")
     else:
         print(f"Unhandled event type: {event_type}")
 
     return HttpResponse(status=200)
 
+def format_phone_number(phone):
+    # Remove all non-digit characters
+    digits = re.sub(r'\D', '', phone)
+
+    # Handle leading '1' (US country code)
+    if len(digits) == 11 and digits.startswith('1'):
+        digits = digits
+    elif len(digits) == 10:
+        digits = '1' + digits
+    else:
+        raise ValueError(f"Invalid phone number length: {phone}")
+
+    return f"+{digits}"
 
 def handle_charge_failed(event):
     print("❌ Charge failed:", json.dumps(event,indent=4))
@@ -303,8 +312,8 @@ def handle_checkout_session_completed(event):
     order_obj = Order.objects.filter(stripe_session_id=session_id).first()
     
     if order_obj:
-        contact_name = order_obj.contact_name_sched
-        contact_phone = re.sub(r"[^\d+]", "", str(order_obj.contact_phone_sched))
+        # contact_name = (order_obj.contact_first_name_sched + " " + order_obj.contact_last_name_sched) if order_obj.contact_first_name_sched and order_obj.contact_last_name_sched else ""
+        contact_phone = format_phone_number(order_obj.contact_phone_sched)
         contact_email = order_obj.contact_email_sched
         token_obj = OAuthServices.get_valid_access_token_obj()
         search_response = ContactServices.search_contacts(token_obj.LocationId,query={
@@ -330,23 +339,30 @@ def handle_checkout_session_completed(event):
                     }
                 ]
         })
+        print(json.dumps(search_response, indent=4))
         if len(search_response.get("contacts", [])) > 0:
             contact_data = search_response["contacts"][0]
-            # print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
+            print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
         else:
             contact ={
-            "firstName": contact_name.split()[0] if contact_name else "",
-            "lastName": " ".join(contact_name.split()[1:]) if contact_name else "",
-            "name": contact_name,
+            "firstName":order_obj.contact_first_name_sched if order_obj.contact_first_name_sched else "",
+            "lastName": order_obj.contact_last_name_sched if order_obj.contact_last_name_sched else "",
+            # "name": contact_name,
             "locationId": token_obj.LocationId,
             "email": contact_email,
             "phone": contact_phone,
             "country": "US",  
             "type": "customer"  
             }
-            contact_data = ContactServices.post_contact(token_obj.LocationId, contact)
+            contact_data, status = ContactServices.post_contact(token_obj.LocationId, contact)
+            if status != 201:
+                contact_id = contact_data.get("meta", {}).get("contactId", None)
+                print(f"Contact creation failed with status {status}. Attempting to retrieve existing contact by ID: {contact_id}")
+                if contact_id:
+                    contact_data = ContactServices.get_contact(token_obj.LocationId, contact_id)
+                    contact_data["id"] = contact_id
+                    # print(f"Contact creation conflicted with: {contact_data.get('id')} Using {json.dumps(contact_data, indent=4)}")
             ContactServices.save_contact(contact_data)
-        # contact_data = { "id":"1233"}
         invoice_payload = build_invoice_payload(
             order_obj, contact=contact_data, location_id=token_obj.LocationId
         )
@@ -384,8 +400,10 @@ def build_notary_order(order :Order, inv_data, prd_name):
     company = NotaryClientCompany.objects.filter(
         company_name=inv_data.get("businessDetails", {}).get("name")
     ).order_by('-updated_at', '-created_at').first()
+    company_id = None
+    owner_id = None
     if company:
-        # print(f"Found existing Notary company: {company.company_name} (ID: {company.id})")
+        print(f"Found existing Notary company: {company.company_name} (ID: {company.id})")
         company_id=company.id
         owner_id = company.owner_id
     else:
@@ -426,7 +444,20 @@ def build_notary_order(order :Order, inv_data, prd_name):
                         "active": company["active"],
                     }
                 )
-    html_content = render_to_string("order_detail.html", context={"invoice_data":inv_data})
+    html_content = render_to_string(
+        "order_product_detail.html", 
+        context={
+            "invoice_data":inv_data,
+            "order":order
+            }
+        )
+    order_html_content = render_to_string(
+        "order_detail.html", 
+        context={
+            "invoice_data":inv_data,
+            "order":order
+            }
+    )
     notary_product={
         "client_id": company_id,
         "owner_id": owner_id,
@@ -439,37 +470,34 @@ def build_notary_order(order :Order, inv_data, prd_name):
             # "scanbacks_instructions": "alias",
             },
         }
-    if response:
-        prd_response = NotaryDashServices.create_products(notary_product)
-        if prd_response:
-            prd = prd_response.get("data", None)
+    prd_response = None
+    prd = {}
+ 
+    prd_response = NotaryDashServices.create_products(notary_product)
+    if prd_response:
+        prd = prd_response.get("data", None)
+    formatted_datetime = order.preferred_datetime.strftime("%Y-%m-%d %H:%M:%S") if order.preferred_datetime else "TBD"
     notary_order = {
         "client_id": company_id,
         # "client_contact_id": 15,
         "location": {
-            "when": "at",
-            "appt_time": order.preferred_datetime.isoformat() if order.preferred_datetime else None,
+            "when": "at" if order.preferred_datetime else "TBD",
+            "appt_time": formatted_datetime,
+            "on": formatted_datetime,
             "address": {
-                "address_1": order.streetAddress or "",
-                "address_2": order.unit or "",
+                "address_1": order.streetAddress or order.unit,
+                # "address_2": order.unit or "",
                 "city": order.city or "",
                 "zip": order.postal_code or "",
                 "state": order.state or "",
             }
             },
-            # "property_address": [
-            #     "alias"
-            # ],
             "signer": {
-                "first_name": order.contact_name_sched.split()[0] if order.contact_name_sched else "",
-                "last_name": order.contact_name_sched.split()[1] if order.contact_name_sched else "",
+                "first_name": order.contact_first_name_sched if order.contact_first_name_sched else "",
+                "last_name": order.contact_last_name_sched if order.contact_last_name_sched else "",
                 "email": order.contact_email_sched or "",
+                "mobile_phone": re.sub(r"[^\d+]", "", str(order.contact_phone_sched)) if order.contact_phone_sched else ""
             },
-            # "cosigner": {
-            #     "first_name": "Mary",
-            #     "last_name": "TestSigner",
-            #     "email": "me@test.com"
-            # },
             "product": {
                 "parent_id": prd.get("id") if prd_response else None,
                 "name": prd.get("name") if prd_response else prd_name,
@@ -477,24 +505,30 @@ def build_notary_order(order :Order, inv_data, prd_name):
                 "charge_client": prd.get("charge_client", order.total_price) if prd_response else order.total_price,
                 "scanbacks_required": False
             },
-            # "attr": {
-            #     "lender": "possimus",
-            #     "file_number": "sapiente",
-            #     "loan_number": "natus",
-            #     "special_instructions": "voluptate",
-            #     "delivery_instructions": "impedit"
-            # }
+            "attr": {
+                # "lender": "possimus",
+                # "file_number": "sapiente",
+                # "loan_number": "natus",
+                "special_instructions": order_html_content or order.sp_instruction,
+                # "delivery_instructions": "impedit"
+            },
+            "team": { "id": 3680 }
+        }
+    if order.cosigner_first_name and order.cosigner_last_name:
+        notary_order["cosigner"] = {
+            "first_name": order.cosigner_first_name if order.cosigner_first_name else "",
+            "last_name": order.cosigner_last_name if order.cosigner_last_name else "",
+            "email": order.cosigner_email or "",
+            "mobile_phone": re.sub(r"[^\d+]", "", str(order.cosigner_phone)) if order.cosigner_phone else "",
+            "type": "cosigner"
         }
     
     ord_response = NotaryDashServices.create_order(notary_order)
     print("Notary order response:", json.dumps(ord_response, indent=4))
     if ord_response and ord_response.get("data"):
-        inv_data["invoiceNumber"] = ord_response.get("data", {}).get("id")
-    return ord_response
+        inv_data["invoiceNumber"] = str(ord_response.get("data", {}).get("id"))
+    return inv_data
         
-
-
-
 def build_invoice_payload(order , contact, location_id):
     """
     Build JSON payload for invoice based on given order.
@@ -525,7 +559,7 @@ def build_invoice_payload(order , contact, location_id):
         
         for service in order.a_la_carte_services.all():
             # Main service item
-            notary_product_names.append(service.name)
+            notary_product_names.append(service.reduced_names)
             items.append(build_item(
                 name=service.name,
                 description=service.description,
@@ -537,8 +571,8 @@ def build_invoice_payload(order , contact, location_id):
             if hasattr(service, "submenu"):
                 submenu = service.submenu
                 items.append(build_item(
-                    name=f"{service.name} - {submenu.label}",
-                    description=f"{submenu.option} - (Prompt: {submenu.prompt_label}- {submenu.prompt_value})",
+                    name=f"{service.name} submenu {("- "+ submenu.label) if submenu.label else ""}",
+                    description=f"{("Selected option: "+ submenu.option + " -") if submenu.option else ""} {"Prompt: " + submenu.prompt_label if submenu.prompt_label else ""} - {submenu.prompt_value if submenu.prompt_value else ""}",
                     price=submenu.amount
                 ))
 
@@ -557,15 +591,18 @@ def build_invoice_payload(order , contact, location_id):
             description=order.bundle_group,
             price=order.total_price
         ))
-    notary_product_names = ", ".join(notary_product_names)
+    notary_product_names = " ".join(notary_product_names)
+    print(f"Notary product names: {notary_product_names}")
     address={
-            "addressLine1": order.streetAddress or "",
-            "addressLine2": order.unit or "",
+            "addressLine1":  order.unit or "",
+            # "addressLine2": order.unit or "",
             "city": order.city or "",
             "state": order.state or "",
             "countryCode": "US",
             "postalCode": order.postal_code or ""
         }
+    contact_ph = format_phone_number(order.contact_phone_sched)
+    print(f"Formatted contact phone: {contact_ph}")
     invoice_data = {
         "altId": location_id,
         "altType": "location",
@@ -573,7 +610,7 @@ def build_invoice_payload(order , contact, location_id):
         "businessDetails": {
      
             "name": order.company_name or "",
-            "phoneNo": order.contact_phone_sched or "",
+            "phoneNo": contact_ph or "",
             "email": order.contact_email_sched or "",
             "address": address,
          
@@ -582,18 +619,18 @@ def build_invoice_payload(order , contact, location_id):
         "currency": "USD",
         "items": items,
         "termsNotes": "<p>This is a default terms.</p>",
-        "title": f"Invoice for {order.get_service_type_display()} Order - {order.company_name}",
+        "title": f"Invoice -{order.get_service_type_display()}",
         "contactDetails": {
             "id": contact.get("id"),
-            "name": order.contact_name_sched or "",
-            "phoneNo": re.sub(r"[^\d+]", "", str(order.contact_phone_sched)) or "",
+            "name": order.contact_first_name_sched + " " + order.contact_last_name_sched if order.contact_first_name_sched and order.contact_last_name_sched else "",
+            "phoneNo": contact_ph or "",
             "email": order.contact_email_sched or "",
             "additionalEmails": [],
             "companyName": "",
             "address": address,
             "customFields": []
         },
-        "invoiceNumber": f"{order.stripe_session_id}",
+        "invoiceNumber": f"{str(order.stripe_session_id)}",
         "issueDate": now().date().isoformat(),
         "dueDate": now().date().isoformat(),
         "sentTo": {
@@ -623,7 +660,7 @@ def send_invoice(invoice_data):
     "liveMode":invoice_data.get("liveMode", False),
     }
     response = InvoiceServices.send_invoice(invoice_data.get("altId"), invoice_data.get("_id"), payload)
-    print(f"Send invoice response: {json.dumps(response, indent=4)}")
+    # print(f"Send invoice response: {json.dumps(response, indent=4)}")
 
 def record_payment(invoice_data):
     oauth_obj = OAuthToken.objects.get(LocationId=invoice_data.get("altId"))
@@ -642,7 +679,7 @@ def record_payment(invoice_data):
 
     }
     response = InvoiceServices.record_payment(invoice_data.get("altId"), invoice_data.get("_id"), payload)
-    print(f"Record payment response: {json.dumps(response, indent=4)}")
+    # print(f"Record payment response: {json.dumps(response, indent=4)}")
     
  
 

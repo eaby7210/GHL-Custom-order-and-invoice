@@ -117,6 +117,7 @@ class NotaryDashServices:
     @staticmethod
     def create_order(data):
         url = f"{BASE_URL}/api/v2/orders"
+        print("Creating order with data:", json.dumps(data, indent=4))
         response = requests.post(url, headers=Notary_header, json=data)
         if response.status_code >= 200 and response.status_code < 300:
             print("✅ Order created successfully.")

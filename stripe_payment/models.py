@@ -45,14 +45,27 @@ class Order(models.Model):
 
     # Scheduling & Contact
     preferred_datetime = models.DateTimeField(null=True, blank=True)
-    contact_name_sched = models.CharField(max_length=100,null=True, blank=True)
+    
+    contact_first_name_sched = models.CharField(max_length=100,null=True, blank=True)
+    contact_last_name_sched = models.CharField(max_length=100,null=True, blank=True)
     contact_phone_sched = models.CharField(max_length=20,null=True, blank=True)
     contact_email_sched = models.EmailField(null=True, blank=True)
+    
+    contact_first_name = models.CharField(max_length=100,null=True, blank=True)
+    contact_last_name = models.CharField(max_length=100,null=True, blank=True)
+    contact_phone = models.CharField(max_length=20,null=True, blank=True)
+    contact_email = models.EmailField(null=True, blank=True)
+    
+    cosigner_first_name = models.CharField(max_length=100, null=True, blank=True)
+    cosigner_last_name = models.CharField(max_length=100, null=True, blank=True)
+    cosigner_phone = models.CharField(max_length=20, null=True, blank=True)
+    cosigner_email = models.EmailField(null=True, blank=True)
     
     company_name = models.CharField(max_length=255, null=True, blank=True)
     # Consent
     accepted_at = models.DateTimeField(null=True, blank=True)
     tbd = models.BooleanField(default=False)
+    sp_instruction = models.TextField(null=True, blank=True)
 
     # Stripe Relationship
     stripe_session_id = models.CharField(max_length=255, null=True, blank=True)
@@ -76,11 +89,12 @@ class ALaCarteService(models.Model):
     submenu_input = models.JSONField(null=True, blank=True)
 
     def __str__(self):
-        return f"{self.name} - {self.order.contact_name_sched}"
+        return f"{self.name} - {self.order.contact_first_name_sched} {self.order.contact_last_name_sched} ({self.order.unit})"
 
 
 class ALaCarteAddOn(models.Model):
     service = models.ForeignKey(ALaCarteService, on_delete=models.CASCADE, related_name="addons")
+    key = models.CharField(max_length=100, null=True, blank=True)
     name = models.CharField(max_length=100)
     price = models.DecimalField(max_digits=10, decimal_places=2)
 
@@ -210,11 +224,10 @@ class NotaryClientCompany(models.Model):
     company_name = models.CharField(max_length=255)
     parent_company_name = models.CharField(max_length=255, null=True, blank=True)
 
-    attr = models.JSONField(default=dict, blank=True)  # Stores dynamic keys like phone, accounting_email
+    attr = models.JSONField(default=dict, null=True, blank=True)  # Stores dynamic keys like phone, accounting_email
 
-    address = models.TextField(null=True, blank=True)
+    address = models.JSONField(default=dict, null=True, blank=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
-
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
     

@@ -203,10 +203,10 @@ class ContactServices:
         if response.status_code == 201:
             # print(json.dumps(response.json(),indent=4))
             ContactServices.save_contact(response.json().get("contact"))
-            return response.json().get("contact", {})
+            return response.json().get("contact", {}) , response.status_code
         else:
             print(f"\033[91m❌ Failed to create contact: {response.status_code} - {response.text}\033[0m")
-            return None
+            return response.json(), response.status_code
 
     
     @staticmethod
@@ -344,9 +344,9 @@ class ContactServices:
 
         url = f"{BASE_URL}/contacts/search"
         payload = {**query}  # Assuming query is a dict with search parameters
-
+        # print(f"search payload: {json.dumps(payload, indent=4)}")
         response = requests.post(url, headers=headers, json=payload)
-        print(f"search result: {json.dumps(response.json(), indent=4)}")
+        # print(f"search result: {json.dumps(response.json(), indent=4)}")
         if response.status_code == 200:
         
             return response.json()
