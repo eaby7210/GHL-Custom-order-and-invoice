@@ -198,8 +198,9 @@ class FormSubmissionAPIView(APIView):
 
 @csrf_exempt
 def stripe_webhook(request):
+        
     payload = request.body
-    sig_header = request.META['HTTP_STRIPE_SIGNATURE']
+    sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', None)
     print(f"Stripe webhook received with payload: {payload}")
     endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
     # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
@@ -483,7 +484,7 @@ def build_notary_order(order :Order, inv_data, prd_name):
         # "client_contact_id": 15,
         "location": {
             "when": "at" if order.preferred_datetime else "TBD",
-            "appt_time": formatted_datetime,
+            
             "on": formatted_datetime,
             "address": {
                 "address_1": order.streetAddress or order.unit,
@@ -515,6 +516,9 @@ def build_notary_order(order :Order, inv_data, prd_name):
             },
             "team": { "id": 3680 }
         }
+    # "appt_time": formatted_datetime,
+    if formatted_datetime!= "TBD":
+        notary_order['location']['appt_time'] = formatted_datetime
     if order.cosigner_first_name and order.cosigner_last_name:
         notary_order["cosigner"] = {
             "first_name": order.cosigner_first_name if order.cosigner_first_name else "",
