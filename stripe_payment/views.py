@@ -200,8 +200,9 @@ class FormSubmissionAPIView(APIView):
 def stripe_webhook(request):
     payload = request.body
     sig_header = request.META['HTTP_STRIPE_SIGNATURE']
-    # endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
-    endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
+    print(f"Stripe webhook received with payload: {payload}")
+    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
+    # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
 
     try:
         event = stripe.Webhook.construct_event(
