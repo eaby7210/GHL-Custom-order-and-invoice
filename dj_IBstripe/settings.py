@@ -14,6 +14,7 @@ from pathlib import Path
 from decouple import config
 from celery.schedules import crontab
 
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -146,7 +147,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'US/Pacific'
 
 USE_I18N = True
 
@@ -179,7 +180,7 @@ CELERY_BEAT_SCHEDULE = {
     # },
     'pull_clients': {
         'task': 'stripe_payment.tasks.pull_clients',
-        'schedule': 300,
+        'schedule':  crontab(hour=0, minute=0),
         'args': (),
     },
 }
@@ -189,7 +190,7 @@ CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'UTC'
+CELERY_TIMEZONE = TIME_ZONE
 
 LOGGING = {
     'version': 1,

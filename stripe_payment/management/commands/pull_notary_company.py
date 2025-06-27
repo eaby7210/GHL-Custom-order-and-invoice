@@ -13,14 +13,15 @@ class Command(BaseCommand):
     help = "Pull Notary Company data from the Notary API and save it to the database"
 
     def handle(self, *args, **kwargs):
-        self.stdout.write("📥 Pulling Notary Company data from the Notary API...")
-        logger.info("📥 Pulling Notary Company data from the Notary API...")
+        self.stdout.write("📥 write Pulling Notary Company data from the Notary API...")
+        logger.info("📥 logger Pulling Notary Company data from the Notary API...")
+        print("📥 print Pulling Notary Company data from the Notary API...")
         url = None  # Start with the initial URL
         while True:
             # Fetch data from the Notary API
             response = NotaryDashServices.get_clients(url)
             if not response or "data" not in response:
-                self.stdout.write("❌ No data received from the API.")
+                logger.info("❌ No data received from the API.")
                 break
 
             # Save data to the NotaryClientCompany model
@@ -42,11 +43,11 @@ class Command(BaseCommand):
                     }
                 )
 
-            self.stdout.write(f"✅ Saved {len(response['data'])} companies.")
+            logger.info(f"✅ Saved {len(response['data'])} companies.")
 
             # Check for the next page URL
             url = response.get("links", {}).get("next")
             if not url:
-                self.stdout.write("🚀 All pages processed.")
+                logger.info("🚀 All pages processed.")
                 break
 
