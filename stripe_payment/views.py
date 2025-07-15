@@ -9,17 +9,20 @@ from stripe_payment.models import (
     StripeCharge, CheckoutSession, NotaryClientCompany,
     StripeWebhookEventLog
 )
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
 from .serializer import OrderSerializer
 from core.services import OAuthServices, ContactServices
 from core.models import Contact, OAuthToken
 from django.utils.dateparse import parse_datetime
 from decimal import Decimal
 import json
-from .utils import create_stripe_session
+from .utils import create_stripe_session, get_coupon
 from .services import InvoiceServices, NotaryDashServices
 import stripe
 # from stripe.error import SignatureVerificationError
-from stripe._error import SignatureVerificationError
+from stripe._error import SignatureVerificationError, StripeError
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -38,7 +41,39 @@ class FormSubmissionAPIView(APIView):
         streetAddress = data.get("streetAddress")
         city = data.get("city")
         state = data.get("state")
-     
+        
+        company_id = data.get("company_id")
+        user_id= data.get("user_id")
+        owner_id = None
+        company_name = None
+        coupon_code = data.get("coupon_code")
+        coupon = None
+        if coupon_code:
+            coupon:stripe.Coupon |None = get_coupon(coupon_code)
+            if coupon:
+                print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
+            else:
+                print(f"Coupon not found or invalid: {coupon_code}")
+        else:
+            print("No coupon code provided.")
+        if (not company_id) or (not user_id):
+            msg = "Company ID and User ID are required."
+            return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            response = NotaryDashServices.get_client(company_id)
+            if not response:
+                return Response({"message":"Error on fetching Client"},status=status.HTTP_400_BAD_REQUEST)
+            else:
+                owner_id = response.get("data",{}).get("owner_id")
+                company_name = response.get("data",{}).get("company_name")
+                if not owner_id:
+                    print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
+                    return Response({"message":"Error on fetching Owner ID"},status=status.HTTP_400_BAD_REQUEST)
+                client = NotaryDashServices.get_client_one_user(company_id,user_id)
+                if not client:
+                    return Response({"message":"Error on fetching Client User"},status=status.HTTP_400_BAD_REQUEST)
+            
+         
         postal_code = data.get("postalCode")
         unit_type = data.get("unitType")
         address = data.get("address")
@@ -82,21 +117,33 @@ class FormSubmissionAPIView(APIView):
             door_code_value=data.get("door_code_value"),
             contact_first_name_sched=data.get("contact_first_name_sched"),
             contact_last_name_sched=data.get("contact_last_name_sched"),
+            contact_phone_sched_type=data.get("contact_phone_type_sched"),
             contact_phone_sched=data.get("contact_phone_sched"),
             contact_email_sched=data.get("contact_email_sched"),
             
             contact_first_name=data.get("contact_first_name"),
             contact_last_name=data.get("contact_last_name"),
+            contact_phone_type=data.get("contact_phone_type"),
             contact_phone=data.get("contact_phone"),
             
-            cosigner_first_name=data.get("cosigner_first_name"),
-            cosigner_last_name=data.get("cosigner_last_name"),
-            cosigner_phone=data.get("cosigner_phone"),
-            cosigner_email=data.get("cosigner_email"),
+            cosigner_first_name=data.get("cosigner_first_name_sched"),
+            cosigner_last_name=data.get("cosigner_last_name_sched"),
+            cosigner_phone_type=data.get("cosigner_phone_type_sched"),
+            cosigner_phone=data.get("cosigner_phone_sched"),
+            # cosigner_email=data.get("cosigner_email"),
             
             sp_instruction=data.get("special_instructions"),
             
-            company_name=data.get("company_name"),
+            coupon_code=coupon_code,
+            coupon_id=coupon.id if coupon else None,
+            coupon_percent = coupon.percent_off if coupon and coupon.percent_off else Decimal('0.00'),
+            coupon_fixed = coupon.amount_off if coupon and coupon.amount_off else Decimal('0.00'),
+            
+            company_id = company_id,
+            user_id= user_id,
+            owner_id=owner_id,
+            
+            company_name=company_name,
             total_price = Decimal(data.get("bundlePrice", 0)) if data.get("bundlePrice") else data.get("a_la_carte_total")
         )
   
@@ -196,14 +243,63 @@ class FormSubmissionAPIView(APIView):
         # Else, return JSON response
         return Response(data, status=status_code)
 
+@api_view(['GET'])
+def notary_view(request):
+    if request.method == "GET":
+        company_id =request.query_params.get('company_id')
+        user_id = request.query_params.get('user_id')
+        print(f"got is {company_id} {user_id}")
+        if (not company_id) or (not user_id):
+            msg = "Company ID and User ID are required."
+            return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            response = NotaryDashServices.get_client(company_id)
+            if not response:
+                return Response({"message":"Error on fetching Client"},status=status.HTTP_400_BAD_REQUEST)
+            else:
+                owner_id = response.get("data").get("owner_id")
+                if not owner_id:
+                    print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
+                    return Response({"message":"Error on fetching Owner ID"},status=status.HTTP_400_BAD_REQUEST)
+                client = NotaryDashServices.get_client_one_user(company_id,user_id)
+                if not client:
+                    return Response({"message":"Error on fetching Client User"},status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                "message": "Successfully fetched Notary Client",
+                "client": company_id,
+                "user_id": user_id,
+                "owner_id": owner_id
+            }, status=status.HTTP_200_OK)
+    return Response({
+        "message": "Notary view is not implemented yet"},status= status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def stripe_coupon(request, coupon_code):
+    """
+    Retrieve a Stripe coupon by its code.
+    """
+    if request.method == "GET":
+        coupon = get_coupon(coupon_code)
+        if coupon:
+            return Response({
+                "id": coupon.id if coupon.id else coupon.stripe_coupon_id, #type: ignore
+                "name": coupon.name if coupon.name else "No Name",
+                "percent_off": coupon.percent_off,
+                "valid": coupon.valid
+                
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "Coupon not found or invalid"}, status=status.HTTP_404_NOT_FOUND)
+    return Response({"error": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+      
 @csrf_exempt
 def stripe_webhook(request):
         
     payload = request.body
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', None)
     print(f"Stripe webhook received with payload: {payload}")
-    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
-    # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
+    # endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
+    endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
 
     try:
         event = stripe.Webhook.construct_event(
@@ -219,37 +315,73 @@ def stripe_webhook(request):
     event_created = event.get('created', None)
     # Process the event type
     event_type = event['type']
+    print(f"Event type: {event_type}")
     data_object = event['data']['object']
     evt_log = StripeWebhookEventLog.objects.filter(event_id=event_id).first()
     if evt_log:
         print(f"Event {event_id} already processed at {evt_log.created_at}")
         return HttpResponse(status=200)
-    StripeWebhookEventLog.objects.create(
+    evt_log = StripeWebhookEventLog(
         event_id=event_id,
         event_type=event_type,
         created_at=make_aware(datetime.datetime.fromtimestamp(event_created)) if event_created else None,
         event_data=json.dumps(data_object, indent=4),
     )
-    
+    payment_indent_id = data_object.get("payment_intent", None) 
 
     # print(f"Received Stripe event: {payload} event: {json.dumps(event, indent=4)}")
     # print("Event: \n", json.dumps(event,indent=4))
     if event_type == 'charge.succeeded':
         handle_charge_succeeded(event)
+        return HttpResponse(status=200)
     elif event_type == 'charge.failed':
         handle_charge_failed(event)
+        return HttpResponse(status=200)
     elif event_type == 'charge.refunded':
         handle_charge_refunded(event)
+        return HttpResponse(status=200)
     elif event_type == 'charge.updated':
         handle_charge_updated(event)
+        return HttpResponse(status=200)
     elif event_type == 'checkout.session.completed':
-        session_obj : CheckoutSession= handle_checkout_session_completed(event)
+        session_obj = handle_checkout_session_completed(event)
         print(f"Checkout session completed: {json.dumps(event, indent=4)}")
-        print(f"Checkout session object: {json.dumps(session_obj, indent=4)}")
+        if not session_obj:
+            msg = "Failed to process CheckoutSession. Expiring session due to server error."
+            evt_log.error_message = msg
+            evt_log.processed = True
+            evt_log.save()
+            
+            # ✅ Proper way to cancel when using manual capture with Checkout
+            try:
+                stripe.checkout.Session.expire(data_object.get("id"))
+            except Exception as e:
+                print(f"Failed to expire session: {e}")
+            
+            return HttpResponse(status=500)
+        else:
+            try:
+                stripe.PaymentIntent.capture(payment_indent_id)
+                evt_log.error_message = "No errors"
+                evt_log.processed = True
+                evt_log.save()
+
+            except StripeError as e:
+                # Handle capture failure
+                msg = e.user_message
+                evt_log.error_message = msg
+                evt_log.processed =True
+                evt_log.save()
+                return HttpResponse(status=500)
+            return HttpResponse(status=200)
+
     else:
         print(f"Unhandled event type: {event_type}")
-
-    return HttpResponse(status=200)
+    
+    return HttpResponse(status=500)
+    
+    
+ 
 
 def format_phone_number(phone):
     # Remove all non-digit characters
@@ -315,8 +447,12 @@ def handle_checkout_session_completed(event):
     
     if order_obj:
         # contact_name = (order_obj.contact_first_name_sched + " " + order_obj.contact_last_name_sched) if order_obj.contact_first_name_sched and order_obj.contact_last_name_sched else ""
+        company_id = order_obj.company_id
+        user_id= order_obj.user_id
+        client_user = NotaryDashServices.get_client_one_user(company_id, user_id)
+        client_user = client_user.get("data", {}) if client_user else {}
         contact_phone = format_phone_number(order_obj.contact_phone_sched)
-        contact_email = order_obj.contact_email_sched
+        contact_email = client_user.get("email")
         token_obj = OAuthServices.get_valid_access_token_obj()
         search_response = ContactServices.search_contacts(token_obj.LocationId,query={
              "locationId":"n7iGMwfy1T5lZZacxygj",
@@ -366,16 +502,23 @@ def handle_checkout_session_completed(event):
                     # print(f"Contact creation conflicted with: {contact_data.get('id')} Using {json.dumps(contact_data, indent=4)}")
             ContactServices.save_contact(contact_data)
         invoice_payload = build_invoice_payload(
-            order_obj, contact=contact_data, location_id=token_obj.LocationId
+            order_obj, contact=contact_data, location_id=token_obj.LocationId,
+            session_obj=obj,client_user=client_user
         )
-        response = InvoiceServices.post_invoice(token_obj.LocationId, invoice_payload)
-        print(f"Invoice response: {json.dumps(response, indent=4)}")
-        if response:
-            order_obj.location_id = token_obj.LocationId
-            order_obj.invoice_id = response.get("_id")
-            order_obj.save()
-        send_invoice(response)
-        record_payment(response)
+        if not invoice_payload:
+            return None
+        else:
+            response = InvoiceServices.post_invoice(token_obj.LocationId, invoice_payload)
+            print(f"Invoice response: {json.dumps(response, indent=4)}")
+            if response:
+                order_obj.location_id = token_obj.LocationId
+                order_obj.invoice_id = response.get("_id")
+                order_obj.save()
+            else:
+                print("Failed to create invoice, skipping sending and payment recording.")
+                return None
+            send_invoice(response)
+            record_payment(response)
     session_obj ,created = CheckoutSession.objects.update_or_create(
         session_id=obj["id"],
         defaults={
@@ -393,59 +536,22 @@ def handle_checkout_session_completed(event):
     
     return session_obj
 
-def build_notary_order(order :Order, inv_data, prd_name):
+def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj):
     
     """
     Build Notary order payload based on given order and contact.
 
     """
-    company = NotaryClientCompany.objects.filter(
-        company_name=inv_data.get("businessDetails", {}).get("name")
-    ).order_by('-updated_at', '-created_at').first()
-    company_id = None
-    owner_id = None
-    if company:
-        print(f"Found existing Notary company: {company.company_name} (ID: {company.id})")
-        company_id=company.id
-        owner_id = company.owner_id
-    else:
-        print("No existing Notary company found, creating a new one.")
-        
-        notary_client = {
-                "company_name":  inv_data.get("businessDetails", {}).get("name", ""),
-                # "owner_id": 11,
-                "parent_company_id": 78312,
-                "address": {
-                    "address_1": inv_data.get("businessDetails", {}).get("address", {}).get("addressLine1", ""),
-                    # "address_2": "provident",
-                    "state": inv_data.get("businessDetails", {}).get("address", {}).get("state", ""),
-                    "city": inv_data.get("businessDetails", {}).get("address", {}).get("city", ""),
-                    "zip": inv_data.get("businessDetails", {}).get("address", {}).get("postalCode", ""),
-                }
-            }
-        
-        response = NotaryDashServices.create_client(notary_client)
-        if response:
-            company = response.get("data",None)
-            company_id = response.get("data",None).get("id")
-            owner_id = response.get("data",None).get("owner_id")
-            # print(json.dumps(response, indent=4))
-            NotaryClientCompany.objects.update_or_create(
-                    id=company["id"],
-                    defaults={
-                        "owner_id": company["owner_id"],
-                        "parent_company_id": company["parent_company_id"],
-                        "type": company["type"],
-                        "company_name": company["company_name"].strip(),
-                        "parent_company_name": company.get("parent_company_name"),
-                        "attr": company["attr"],
-                        "address": company.get("address"),
-                        "deleted_at": make_aware(datetime.datetime.strptime(company["deleted_at"], "%Y-%m-%d %H:%M:%S")) if company["deleted_at"] else None,
-                        "created_at": make_aware(datetime.datetime.strptime(company["created_at"], "%Y-%m-%d %H:%M:%S")),
-                        "updated_at": make_aware(datetime.datetime.strptime(company["updated_at"], "%Y-%m-%d %H:%M:%S")),
-                        "active": company["active"],
-                    }
-                )
+    final_price = float(order.total_price) if order.total_price else 0
+    discount_amount = inv_data.get("discount",{}).get("value",0)
+    total_amount = session_obj.amount_total if session_obj else None
+    total_amount = total_amount/100 if total_amount else None
+    print(f"final price= {final_price} - discount: {discount_amount} {total_amount}")
+    final_price = final_price - discount_amount
+    company_id = order.company_id
+    client_id = order.user_id
+    
+    
     html_content = render_to_string(
         "order_product_detail.html", 
         context={
@@ -462,10 +568,10 @@ def build_notary_order(order :Order, inv_data, prd_name):
     )
     notary_product={
         "client_id": company_id,
-        "owner_id": owner_id,
+        "owner_id": order.owner_id,
         "name": prd_name,
         "pay_to_notary": 0,
-        "charge_client": float(order.total_price) if order.total_price else 0,
+        "charge_client": total_amount if total_amount else final_price,
         "scanbacks_required": False,
         "attr": {
             "additional_instructions": html_content,
@@ -474,14 +580,14 @@ def build_notary_order(order :Order, inv_data, prd_name):
         }
     prd_response = None
     prd = {}
- 
     prd_response = NotaryDashServices.create_products(notary_product)
     if prd_response:
         prd = prd_response.get("data", None)
+        print(f"prd: {json.dumps(prd, indent=4)}")
     formatted_datetime = order.preferred_datetime.strftime("%Y-%m-%d %H:%M:%S") if order.preferred_datetime else "TBD"
     notary_order = {
         "client_id": company_id,
-        # "client_contact_id": 15,
+        "client_contact_id": client_id,
         "location": {
             "when": "at" if order.preferred_datetime else "TBD",
             
@@ -497,7 +603,6 @@ def build_notary_order(order :Order, inv_data, prd_name):
             "signer": {
                 "first_name": order.contact_first_name_sched if order.contact_first_name_sched else "",
                 "last_name": order.contact_last_name_sched if order.contact_last_name_sched else "",
-                "email": order.contact_email_sched or "",
                 "mobile_phone": re.sub(r"[^\d+]", "", str(order.contact_phone_sched)) if order.contact_phone_sched else ""
             },
             "product": {
@@ -523,18 +628,20 @@ def build_notary_order(order :Order, inv_data, prd_name):
         notary_order["cosigner"] = {
             "first_name": order.cosigner_first_name if order.cosigner_first_name else "",
             "last_name": order.cosigner_last_name if order.cosigner_last_name else "",
-            "email": order.cosigner_email or "",
             "mobile_phone": re.sub(r"[^\d+]", "", str(order.cosigner_phone)) if order.cosigner_phone else "",
             "type": "cosigner"
         }
     
     ord_response = NotaryDashServices.create_order(notary_order)
-    print("Notary order response:", json.dumps(ord_response, indent=4))
+    # print("Notary order response:", json.dumps(ord_response, indent=4))
     if ord_response and ord_response.get("data"):
         inv_data["invoiceNumber"] = str(ord_response.get("data", {}).get("id"))
-    return inv_data
+        return inv_data
+    else:
         
-def build_invoice_payload(order , contact, location_id):
+        return None
+        
+def build_invoice_payload(order , contact, location_id, session_obj,client_user):
     """
     Build JSON payload for invoice based on given order.
     """
@@ -608,6 +715,7 @@ def build_invoice_payload(order , contact, location_id):
         }
     contact_ph = format_phone_number(order.contact_phone_sched)
     print(f"Formatted contact phone: {contact_ph}")
+    print(f"discount amount: {session_obj.total_details.amount_discount}")
     invoice_data = {
         "altId": location_id,
         "altType": "location",
@@ -616,20 +724,25 @@ def build_invoice_payload(order , contact, location_id):
      
             "name": order.company_name or "",
             "phoneNo": contact_ph or "",
-            "email": order.contact_email_sched or "",
+            "email": client_user.get("email", ""),
             "address": address,
          
         },
         # "customValues": [],
         "currency": "USD",
         "items": items,
+        "discount": {
+            "value": (float(session_obj.total_details.amount_discount)/100),
+            "type": "fixed",
+            # "validOnProductIds": "[ '6579751d56f60276e5bd4154' ]"
+        },
         "termsNotes": "<p>This is a default terms.</p>",
         "title": f"Invoice -{order.get_service_type_display()}",
         "contactDetails": {
             "id": contact.get("id"),
             "name": order.contact_first_name_sched + " " + order.contact_last_name_sched if order.contact_first_name_sched and order.contact_last_name_sched else "",
             "phoneNo": contact_ph or "",
-            "email": order.contact_email_sched or "",
+            "email": client_user.get("email", ""),
             "additionalEmails": [],
             "companyName": "",
             "address": address,
@@ -639,7 +752,7 @@ def build_invoice_payload(order , contact, location_id):
         "issueDate": now().date().isoformat(),
         "dueDate": now().date().isoformat(),
         "sentTo": {
-            "email": [order.contact_email_sched] if order.contact_email_sched else [],
+            "email": [client_user.get("email")] if client_user.get("email") else [],
             "emailCc": [],
             "emailBcc": [],
             "phoneNo": [order.contact_phone_sched] if order.contact_phone_sched else []
@@ -651,7 +764,8 @@ def build_invoice_payload(order , contact, location_id):
         },
         "attachments": []
     }
-    invoice_data = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names)
+    
+    invoice_data = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names, client_user=client_user, session_obj=session_obj)
     print("Invoice data payload:", json.dumps(invoice_data, indent=4))
     return invoice_data
 
@@ -686,7 +800,7 @@ def record_payment(invoice_data):
     response = InvoiceServices.record_payment(invoice_data.get("altId"), invoice_data.get("_id"), payload)
     # print(f"Record payment response: {json.dumps(response, indent=4)}")
     
- 
+
 
 
 class OrderRetrieveView(viewsets.GenericViewSet, mixins.RetrieveModelMixin):

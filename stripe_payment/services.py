@@ -80,7 +80,7 @@ class NotaryDashServices:
     @staticmethod
     def get_clients(url = None):
         if not bool(url):
-            url = F"{BASE_URL}/api/v2/clients"
+            url = f"{BASE_URL}/api/v2/clients"
         response = requests.get(url, headers=Notary_header)
         if response.status_code >= 200 and response.status_code < 300:
             print("✅ Clients retrieved successfully.")
@@ -88,6 +88,18 @@ class NotaryDashServices:
         else:
             print(f"❌ Failed to retrieve clients: {response.status_code} - {response.text}")
             return None
+    
+    @staticmethod
+    def get_client(id: str):
+        url = f"{BASE_URL}/api/v2/clients/{id}"
+        response = requests.get(url,headers=Notary_header)
+        if response.status_code >= 200 and response.status_code < 300:
+            print("✅ Clients retrieved successfully.")
+            return response.json()
+        else:
+            print(f"❌ Failed to retrieve clients: {response.status_code} - {response.text}")
+            return None
+        
     
     @staticmethod
     def get_client_user(client_id, url = None):
@@ -101,7 +113,20 @@ class NotaryDashServices:
         else:
             print(f"❌ Failed to retrieve client user for client {client_id}: {response.status_code} - {response.text}")
             return None
+    
+    @staticmethod
+    def get_client_one_user(client_id, user_id):
+        url = f"{BASE_URL}/api/v2/clients/{client_id}/users/{user_id}"
+        response = requests.get(url,headers=Notary_header)
+        if response.status_code >= 200 and response.status_code < 300:
+            print(f"✅ Client user for client {client_id} retrieved successfully.")
+            print(json.dumps(response.json(), indent=4))
+            return response.json()
+        else:
+            print(f"❌ Failed to retrieve client user for client {client_id}: {response.status_code} - {response.text}")
+            return None
         
+      
     @staticmethod
     def get_products(company_id, is_global:bool):
         url = f"{BASE_URL}/api/v2/companies/{company_id}/products"

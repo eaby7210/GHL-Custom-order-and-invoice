@@ -11,6 +11,10 @@ class Order(models.Model):
         ("a_la_carte", "A La Carte"),
         ("bundled", "Bundled"),
     ]
+    PHONE_TYPE_CHOICES = [
+        ("mobile", "Mobile"),
+        ("landline", "Landline"),
+    ]
 
     unit_type = models.CharField(max_length=20, choices=UNIT_TYPE_CHOICES)
     address = models.TextField(null=True, blank=True)
@@ -46,18 +50,25 @@ class Order(models.Model):
     # Scheduling & Contact
     preferred_datetime = models.DateTimeField(null=True, blank=True)
     
+    company_id = models.CharField(max_length=100,null=True, blank=True)
+    user_id= models.CharField(max_length=100, null=True, blank=True)
+    owner_id= models.CharField(max_length=100, null=True, blank=True)
+    
     contact_first_name_sched = models.CharField(max_length=100,null=True, blank=True)
     contact_last_name_sched = models.CharField(max_length=100,null=True, blank=True)
+    contact_phone_sched_type = models.CharField(max_length=20, choices=PHONE_TYPE_CHOICES, null=True, blank=True)
     contact_phone_sched = models.CharField(max_length=20,null=True, blank=True)
     contact_email_sched = models.EmailField(null=True, blank=True)
     
     contact_first_name = models.CharField(max_length=100,null=True, blank=True)
     contact_last_name = models.CharField(max_length=100,null=True, blank=True)
+    contact_phone_type = models.CharField(max_length=20, choices=PHONE_TYPE_CHOICES, null=True, blank=True)
     contact_phone = models.CharField(max_length=20,null=True, blank=True)
     contact_email = models.EmailField(null=True, blank=True)
     
     cosigner_first_name = models.CharField(max_length=100, null=True, blank=True)
     cosigner_last_name = models.CharField(max_length=100, null=True, blank=True)
+    cosigner_phone_type = models.CharField(max_length=20, choices=PHONE_TYPE_CHOICES, null=True, blank=True)
     cosigner_phone = models.CharField(max_length=20, null=True, blank=True)
     cosigner_email = models.EmailField(null=True, blank=True)
     
@@ -70,9 +81,15 @@ class Order(models.Model):
     # Stripe Relationship
     stripe_session_id = models.CharField(max_length=255, null=True, blank=True)
     location_id = models.CharField(max_length=50, null=True, blank=True)
+    
+    coupon_code = models.CharField(max_length=50, null=True, blank=True)
+    coupon_id = models.CharField(max_length=50, null=True, blank=True)
+    coupon_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    coupon_fixed = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
     created_at = models.DateTimeField(auto_now_add=True)
     invoice_id = models.CharField(max_length=50, null=True, blank=True)
+    
 
 class ALaCarteService(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="a_la_carte_services")
@@ -115,6 +132,20 @@ class ALaCarteSubMenu(models.Model):
         return f"Submenu for {self.service.name}"
 
 
+class Coupon(models.Model):
+    name = models.CharField(max_length=255, null=True, blank=True)  # Optional name for the coupon
+    code = models.CharField(max_length=100, unique=True)  # user-facing code (id from Stripe)
+    stripe_coupon_id = models.CharField(max_length=100)   # technically same as code from Stripe
+    amount_off = models.IntegerField(null=True, blank=True)
+    percent_off = models.FloatField(null=True, blank=True)
+    duration = models.CharField(max_length=20, null=True, blank=True)
+    currency = models.CharField(max_length=10, null=True, blank=True)
+    valid = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.valid}"
+
 class StripeCharge(models.Model):
     charge_id = models.CharField(max_length=100, unique=True)
     payment_intent_id = models.CharField(max_length=100, null=True, blank=True)
@@ -144,8 +175,9 @@ class StripeWebhookEventLog(models.Model):
     event_type = models.CharField(max_length=50)
     event_data = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
-    # processed = models.BooleanField(default=False)
-    # error_message = models.TextField(null=True, blank=True)
+    processed = models.BooleanField(default=False)
+    error_message = models.TextField(null=True, blank=True)
+    json_body = models.JSONField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.event_type} - {self.event_id}"
