@@ -118,7 +118,7 @@ def create_stripe_session(order :Order, domain):
             )
     # print("Creating Stripe session with line items:", json.dumps(line_items, indent=4))
     session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
+        payment_method_types=["card","link"],
         mode="payment",
         line_items=line_items,
         success_url=f"{domain}?status=success&session_id={{CHECKOUT_SESSION_ID}}",
