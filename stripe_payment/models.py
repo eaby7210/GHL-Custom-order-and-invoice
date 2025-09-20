@@ -89,49 +89,154 @@ class Order(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     invoice_id = models.CharField(max_length=50, null=True, blank=True)
+    order_protection = models.BooleanField(default=False)
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
+    
+class Bundle(models.Model):
+    """Each bundle in an order"""
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="bundles")
+    name = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    base_price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"{self.name} ({self.order.id})" #type:ignore
+    
     
 
 class ALaCarteService(models.Model):
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="a_la_carte_services")
+    order = models.ForeignKey("Order", related_name="a_la_carte_services", on_delete=models.CASCADE)
 
-    key = models.CharField(max_length=100, null=True, blank=True)
-    name = models.CharField(max_length=255, null=True, blank=True)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
-    description = models.TextField(null=True, blank=True)
-    prompt = models.TextField(null=True, blank=True)
-    total_price = models.DecimalField(max_digits=10, decimal_places=2)
-    addons_price = models.DecimalField(max_digits=10, decimal_places=2)
-    reduced_names = models.CharField(max_length=255, null=True, blank=True)
-    # Optional input (like maintenance descriptions)
-    submenu_input = models.JSONField(null=True, blank=True)
+    # Service Info
+    service_id = models.CharField(max_length=100)   # e.g. "photos", "lockboxes"
+    title = models.CharField(max_length=255)        # e.g. "Property Photos"
+    subtitle = models.TextField(null=True, blank=True)
+
+    # Form Info
+    form_title = models.CharField(max_length=255, null=True, blank=True)
+    form_description = models.TextField(null=True, blank=True)
 
     def __str__(self):
-        return f"{self.name} - {self.order.contact_first_name_sched} {self.order.contact_last_name_sched} ({self.order.unit})"
+        return f"{self.title} ({self.order.id})"
+
+    @classmethod
+    def from_api(cls, order, recieved_data):
+        """
+        Create a service and its related items/options/submenu from API payload.
+        """
+        a_la_carte_order = recieved_data.get("a_la_carteOrder",[])
+        for data in a_la_carte_order:
+            service = cls.objects.create(
+                order=order,
+                service_id=data.get("id"),
+                title=data.get("title"),
+                subtitle=data.get("subtitle"),
+                form_title=data.get("form", {}).get("title"),
+                form_description=data.get("form", {}).get("description"),
+            )
+
+            for item_data in data.get("form", {}).get("items", []):
+                ALaCarteItem.from_api(service, item_data, data.get("form", {}))
+
+        return order
 
 
-class ALaCarteAddOn(models.Model):
-    service = models.ForeignKey(ALaCarteService, on_delete=models.CASCADE, related_name="addons")
-    key = models.CharField(max_length=100, null=True, blank=True)
-    name = models.CharField(max_length=100)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+class ALaCarteItem(models.Model):
+    service = models.ForeignKey(ALaCarteService, related_name="items", on_delete=models.CASCADE)
+    item_id = models.CharField(max_length=100)
+    title = models.CharField(max_length=255)
+    subtitle = models.TextField(null=True, blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    base_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    protection_invalid = models.BooleanField(default=False)
+
+    # Flattened option group fields
+    options_type = models.CharField(max_length=50, choices=[
+        ("checkbox", "Checkbox"),
+        ("counter", "Counter"),
+        ("none", "None"),
+        ("mixed", "Mixed"),
+    ], default="none")
+    minimum_required = models.IntegerField(default=0)
 
     def __str__(self):
-        return f"{self.name} for {self.service.name}"
+        return f"{self.title} ({self.service.title})"
+
+    @classmethod
+    def from_api(cls, service, data, form_data=None):
+        form_options = data.get("options", {})
+        item = cls.objects.create(
+            service=service,
+            item_id=data.get("id"),
+            title=data.get("title"),
+            subtitle=data.get("subtitle"),
+            price=data.get("price"),
+            base_price=data.get("basePrice"),
+            protection_invalid=data.get("protectionInvalid", False),
+            options_type=form_options.get("type", "none"),
+            minimum_required=form_options.get("minimumRequired", 0),
+        )
+
+        # Create options if present
+        for opt in form_options.get("items", []):
+            ALaCarteOption.from_api(item, opt)
+
+        # Create submenu if present (from parent form, not just item)
+        if form_data:
+            submenu = form_data.get("submenu", {})
+            for sub_item in submenu.get("items", []):
+                ALaCarteSubMenuItem.from_api(item, sub_item)
+
+        return item
 
 
-class ALaCarteSubMenu(models.Model):
-    service = models.OneToOneField(ALaCarteService, on_delete=models.CASCADE, related_name="submenu")
-    option = models.CharField(max_length=100, null=True, blank=True)
-    label = models.CharField(max_length=255,null=True, blank=True)
-    amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
-    prompt_label = models.CharField(max_length=255, null=True, blank=True, default=None)
-    prompt_value = models.TextField(null=True, blank=True, default=None) 
-    
+class ALaCarteOption(models.Model):
+    item = models.ForeignKey(ALaCarteItem, related_name="options", on_delete=models.CASCADE)
+    option_id = models.CharField(max_length=100)
+    label = models.CharField(max_length=255)
+    value = models.BooleanField(default=False)
+    disabled = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"Submenu for {self.service.name}"
+        return f"{self.label} ({self.item.title})"
+
+    @classmethod
+    def from_api(cls, item, data):
+        return cls.objects.create(
+            item=item,
+            option_id=data.get("id"),
+            label=data.get("label"),
+            value=data.get("value", False),
+            disabled=data.get("disabled", False),
+        )
 
 
+class ALaCarteSubMenuItem(models.Model):
+    item = models.ForeignKey(ALaCarteItem, related_name="submenu_items", on_delete=models.CASCADE)
+    submenu_item_id = models.CharField(max_length=100)
+    label = models.CharField(max_length=255)
+    type = models.CharField(max_length=50, choices=[
+        ("counter", "Counter"),
+        ("checkbox", "Checkbox"),
+    ], default="counter")
+    value = models.IntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.label} (submenu of {self.item.title})"
+
+    @classmethod
+    def from_api(cls, item, data):
+        return cls.objects.create(
+            item=item,
+            submenu_item_id=data.get("id"),
+            label=data.get("label"),
+            type=data.get("type", "counter"),
+            value=data.get("value", 0),
+        )
+        
+        
 class Coupon(models.Model):
     name = models.CharField(max_length=255, null=True, blank=True)  # Optional name for the coupon
     code = models.CharField(max_length=100, unique=True)  # user-facing code (id from Stripe)

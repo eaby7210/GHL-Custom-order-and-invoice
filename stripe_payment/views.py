@@ -5,9 +5,9 @@ from rest_framework.response import Response
 from rest_framework import viewsets, mixins
 from rest_framework import status
 from stripe_payment.models import (
-    Order, ALaCarteService, ALaCarteAddOn, ALaCarteSubMenu,
+    Order, ALaCarteService,
     StripeCharge, CheckoutSession, NotaryClientCompany,
-    StripeWebhookEventLog
+    StripeWebhookEventLog, Bundle
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -144,56 +144,30 @@ class FormSubmissionAPIView(APIView):
             owner_id=owner_id,
             
             company_name=company_name,
-            total_price = Decimal(data.get("bundlePrice", 0)) if data.get("bundlePrice") else data.get("a_la_carte_total")
+            total_price = Decimal(data.get("bundlePrice", 0)) if data.get("bundlePrice") else data.get("a_la_carte_total"),
+            order_protection= data.get("order_protection")
         )
   
-        
+        #Save bundles
+        bundles_data = data.get("bundles", [])
+        for b in bundles_data:
+            Bundle.objects.create(
+                order=order,
+                name=b.get("name"),
+                description=b.get("description"),
+                base_price=Decimal(str(b.get("basePrice", 0))),
+                price=Decimal(str(b.get("price", 0))),
+            )
+
     
 
         # Handle A La Carte services
         if service_type == "a_la_carte":
-            # a_la_services = data.get("a_la_carte_services", [])
-            a_la_services = [
-                value for key, value in data.items()
-                if key.startswith("a_la_carte_") and key != "a_la_carte_total"
-            ]
-            # print("A La Carte Services:", json.dumps(a_la_services, indent=4))
-            for item in a_la_services:
-                service = ALaCarteService.objects.create(
-                    order=order,
-                    key=item.get("key"),
-                    name=item.get("name"),
-                    price=Decimal(item.get("price", 0)),
-                    description=item.get("description"),
-                    prompt=item.get("prompt"),
-                    total_price=Decimal(item.get("total_price", 0)),
-                    addons_price=Decimal(item.get("addons_price", 0)),
-                    submenu_input=item.get("submenu_input"),
-                    reduced_names=item.get("reduced_name", ""),
-                )
-
-                
-                for addon_key, addon_data in item.get("addOns", {}).items():
-                    # addon_data is expected to be a dict with 'label' and 'price'
-                    ALaCarteAddOn.objects.create(
-                        service=service,
-                        key=addon_key,
-                        name=addon_data.get("label", addon_key),
-                        price=Decimal(addon_data.get("price", 0))
-    )
-
-                # Submenu
-                submenu = item.get("submenu")
-                if submenu:
-                    print(f"Submenu for service {service.name}: {json.dumps(submenu, indent=4)}")
-                    ALaCarteSubMenu.objects.create(
-                        service=service,
-                        option=submenu.get("option"),
-                        label=submenu.get("label"),
-                        prompt_label=submenu.get("prompt"),
-                        prompt_value=submenu.get("prompt_value"),
-                        amount = Decimal(submenu.get("amount") or submenu.get("option_price") or 0)
-                    )
+           progress = data.get("progress", {})
+           
+           order.discount_percent = Decimal(progress.get("currentPercent", 0))
+           ALaCarteService.from_api(order,data)
+               
         frontend_domain = request.headers.get("Origin") 
         # if not frontend_domain:
         #     frontend_domain = "http://localhost:5173"

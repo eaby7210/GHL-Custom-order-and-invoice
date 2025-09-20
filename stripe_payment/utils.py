@@ -4,7 +4,7 @@ from django.conf import settings
 from decimal import Decimal
 from stripe_payment.models import (
     Coupon, Order,ALaCarteService,
-    ALaCarteAddOn, ALaCarteSubMenu
+    
 )
 import json
 
@@ -17,6 +17,7 @@ def create_stripe_session(order :Order, domain):
     """
     line_items = []
 
+
     if order.service_type == "bundled":
         if order.bundle_item:
             line_items.append({
@@ -26,88 +27,84 @@ def create_stripe_session(order :Order, domain):
                         "name": order.bundle_item,
                         "description": f"Bundle - {order.bundle_item} of {order.bundle_group} group",
                     },
-                    "unit_amount": int((order.total_price if order and order.total_price else 0) * 100),  # Stripe uses cents
+                    "unit_amount": int((order.total_price if order and order.total_price else 0) * 100),
                 },
                 "quantity": 1,
             })
 
     elif order.service_type == "a_la_carte":
-        services : list[ALaCarteService] = order.a_la_carte_services.all() # type: ignore
+        services: list[ALaCarteService] = order.a_la_carte_services.all()  # type: ignore
+
         for service in services:
-            total = service.total_price or Decimal('0.00')
-            price = service.price or Decimal('0.00')
+            items = service.items.all() # type: ignore
 
-            # Prepare Add-ons metadata
-            addons :list[ALaCarteAddOn] = service.addons.all()  # type: ignore
-          
-            for addon in addons:
-                line_items.append({
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {
-                        "name": f"{service.name}-Addon {addon.name}" or "Custom Service",
-                        "description": f"Addon - {str(addon)}" or "",
-                        "metadata":{
-                            "addon_name": addon.name,
-                            "addon_key": addon.key,
-                            "addon_price": str(addon.price) if addon.price else "0.00",
-                        }
-                    },
-                    "unit_amount": int((addon.price if addon.price else 0) * 100),
-                },
-                "quantity": 1,
-            })
-                
+            for item in items:
+                # Collect selected options (only where value=True)
+                selected_options = item.options.filter(value=True).values_list("label", flat=True)
 
-            # Prepare Submenu metadata (if exists)
-            submenu_metadata = {}
-             
-            if hasattr(service, 'submenu') and service.submenu: # type: ignore
-                service_submenu :ALaCarteSubMenu = service.submenu # type: ignore
-                submenu_metadata = {
-                    "submenu_option": service_submenu.option,
-                    "submenu_label": service_submenu.label,
-                    "submenu_amount": str(service_submenu.amount)
-                }
+                option_suffix = ""
+                if selected_options:
+                    option_suffix = f" ({' + '.join(selected_options)})"
+
+                product_name = f"{item.title}{option_suffix}"
+
+                # Use item price, fallback to base_price, else 0
+                price_value = item.price or item.base_price or 0
+
                 line_items.append({
                     "price_data": {
                         "currency": "usd",
                         "product_data": {
-                            "name": f"{service.name}-Submenu Option {service_submenu.label}" or "Custom Service Option",
-                            "description": f"Submenu {service_submenu.label}-{service_submenu.option} for {service.name}" or "",
-                            "metadata":{
-                                "submenu_name": service.name,
-                                "addon_key": addon.key,
+                            "name": product_name,
+                            "description": service.title,
+                            "metadata": {
+                                "service_id": service.service_id,
+                                "item_id": item.item_id,
+                                "options": ", ".join(selected_options),
                             }
                         },
-                            "unit_amount": int((service_submenu.amount) * 100),
-                        },
-                        "quantity": 1,
-                    })
-                if service_submenu.prompt_label:
-                    # print(service_submenu.prompt_label, service_submenu.prompt_value)
-                    submenu_metadata["submenu_prompt"] = service_submenu.prompt_label
-                    submenu_metadata["submenu_prompt_value"] = service_submenu.prompt_value
-
-            # Combine metadata
-            # combined_metadata = {
-            #     **addon_metadata,
-            #     **submenu_metadata,
-            #     "Total Price": f"${str(total)}",
-            # }
-
-            line_items.append({
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {
-                        "name": service.name or "Custom Service",
-                        "description": service.description or "",
-                        # "metadata": combined_metadata
+                        "unit_amount": int(price_value * 100),  # Stripe needs cents
                     },
-                    "unit_amount": int(price * 100),
+                    "quantity": 1,
+                })
+
+    total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
+
+    # if order.discount_percent and order.discount_percent > 0:
+    #     discount_amount_cents = int(total_price_cents * (float(order.discount_percent) / 100))
+    #     discounted_total_cents = total_price_cents - discount_amount_cents
+
+    #     # Replace line items with a single consolidated item
+    #     line_items = [{
+    #         "price_data": {
+    #             "currency": "usd",
+    #             "product_data": {
+    #                 "name": "Services (discount applied)",
+    #                 "description": f"Includes {order.discount_percent}% discount",
+    #             },
+    #             "unit_amount": discounted_total_cents,
+    #         },
+    #         "quantity": 1,
+    #     }]
+    #     total_price_cents = discounted_total_cents
+
+    # --- Add Order Protection  ---
+    if order.order_protection:
+        protection_price_cents = int(total_price_cents * 0.04)
+        line_items.append({
+            "price_data": {
+                "currency": "usd",
+                "product_data": {
+                    "name": "Order Protection",
+                    "description": "Optional order protection (4% of order total after discounts)",
                 },
-                "quantity": 1,
-            })
+                "unit_amount": protection_price_cents,
+            },
+            "quantity": 1,
+        })
+
+
+
     coupon_data = None
     if order.coupon_code:
         coupon = get_coupon_by_promo_code(order.coupon_code)

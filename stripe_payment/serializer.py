@@ -1,25 +1,13 @@
 from rest_framework import serializers, viewsets, mixins
 from .models import (
-    Order, ALaCarteService, ALaCarteAddOn, ALaCarteSubMenu,
+    Order, ALaCarteService,
     StripeCharge, CheckoutSession, Invoice, BusinessDetails, Discount
 )
 
 
-class ALaCarteAddOnSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ALaCarteAddOn
-        fields = ["id", "name", "price"]
-
-
-class ALaCarteSubMenuSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ALaCarteSubMenu
-        fields = ["id", "option", "label", "amount"]
-
 
 class ALaCarteServiceSerializer(serializers.ModelSerializer):
-    addons = ALaCarteAddOnSerializer(many=True, read_only=True)
-    submenu = ALaCarteSubMenuSerializer(read_only=True)
+
 
     class Meta:
         model = ALaCarteService
