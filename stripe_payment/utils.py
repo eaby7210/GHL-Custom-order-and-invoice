@@ -96,7 +96,7 @@ def create_stripe_session(order :Order, domain):
                 "currency": "usd",
                 "product_data": {
                     "name": "Order Protection",
-                    "description": "Optional order protection (4% of order total after discounts)",
+                    "description": "Optional order protection (4% of order total)",
                 },
                 "unit_amount": protection_price_cents,
             },
