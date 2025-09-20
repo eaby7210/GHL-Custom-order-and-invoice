@@ -56,22 +56,22 @@ class FormSubmissionAPIView(APIView):
                 print(f"Coupon not found or invalid: {coupon_code}")
         else:
             print("No coupon code provided.")
-        if (not company_id) or (not user_id):
-            msg = "Company ID and User ID are required."
-            return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            response = NotaryDashServices.get_client(company_id)
-            if not response:
-                return Response({"message":"Error on fetching Client"},status=status.HTTP_400_BAD_REQUEST)
-            else:
-                owner_id = response.get("data",{}).get("owner_id")
-                company_name = response.get("data",{}).get("company_name")
-                if not owner_id:
-                    print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
-                    return Response({"message":"Error on fetching Owner ID"},status=status.HTTP_400_BAD_REQUEST)
-                client = NotaryDashServices.get_client_one_user(company_id,user_id)
-                if not client:
-                    return Response({"message":"Error on fetching Client User"},status=status.HTTP_400_BAD_REQUEST)
+        # if (not company_id) or (not user_id):
+        #     msg = "Company ID and User ID are required."
+        #     return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
+        # else:
+        #     response = NotaryDashServices.get_client(company_id)
+        #     if not response:
+        #         return Response({"message":"Error on fetching Client"},status=status.HTTP_400_BAD_REQUEST)
+        #     else:
+        #         owner_id = response.get("data",{}).get("owner_id")
+        #         company_name = response.get("data",{}).get("company_name")
+        #         if not owner_id:
+        #             print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
+        #             return Response({"message":"Error on fetching Owner ID"},status=status.HTTP_400_BAD_REQUEST)
+        #         client = NotaryDashServices.get_client_one_user(company_id,user_id)
+        #         if not client:
+        #             return Response({"message":"Error on fetching Client User"},status=status.HTTP_400_BAD_REQUEST)
             
          
         postal_code = data.get("postalCode")
