@@ -150,6 +150,7 @@ class ALaCarteItem(models.Model):
     subtitle = models.TextField(null=True, blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     base_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     protection_invalid = models.BooleanField(default=False)
 
     # Flattened option group fields
