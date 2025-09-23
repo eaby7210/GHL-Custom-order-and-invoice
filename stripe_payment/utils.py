@@ -10,14 +10,20 @@ import json
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-def create_stripe_session(order :Order, domain):
+def create_stripe_session(order: Order, domain):
     """
     Creates a Stripe Checkout Session for the given order.
     `domain` should be something like 'https://yourfrontenddomain.com'
     """
+    import stripe
+    from django.conf import settings
+    import json
+
+    stripe.api_key = settings.STRIPE_SECRET_KEY
+
     line_items = []
 
-
+    # --- Build line items ---
     if order.service_type == "bundled":
         if order.bundle_item:
             line_items.append({
@@ -36,19 +42,12 @@ def create_stripe_session(order :Order, domain):
         services: list[ALaCarteService] = order.a_la_carte_services.all()  # type: ignore
 
         for service in services:
-            items = service.items.all() # type: ignore
+            items = service.items.all()  # type: ignore
 
             for item in items:
-                # Collect selected options (only where value=True)
                 selected_options = item.options.filter(value=True).values_list("label", flat=True)
-
-                option_suffix = ""
-                if selected_options:
-                    option_suffix = f" ({' + '.join(selected_options)})"
-
+                option_suffix = f" ({' + '.join(selected_options)})" if selected_options else ""
                 product_name = f"{item.title}{option_suffix}"
-
-                # Use item price, fallback to base_price, else 0
                 price_value = item.price or item.base_price or 0
 
                 line_items.append({
@@ -63,34 +62,19 @@ def create_stripe_session(order :Order, domain):
                                 "options": ", ".join(selected_options),
                             }
                         },
-                        "unit_amount": int(price_value * 100),  # Stripe needs cents
+                        "unit_amount": int(price_value * 100),
                     },
                     "quantity": 1,
                 })
 
+    # --- Base total ---
     total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
+    print(f"[DEBUG] Base total: {total_price_cents / 100:.2f} USD")
 
-    # if order.discount_percent and order.discount_percent > 0:
-    #     discount_amount_cents = int(total_price_cents * (float(order.discount_percent) / 100))
-    #     discounted_total_cents = total_price_cents - discount_amount_cents
-
-    #     # Replace line items with a single consolidated item
-    #     line_items = [{
-    #         "price_data": {
-    #             "currency": "usd",
-    #             "product_data": {
-    #                 "name": "Services (discount applied)",
-    #                 "description": f"Includes {order.discount_percent}% discount",
-    #             },
-    #             "unit_amount": discounted_total_cents,
-    #         },
-    #         "quantity": 1,
-    #     }]
-    #     total_price_cents = discounted_total_cents
-
-    # --- Add Order Protection  ---
+    # --- Add Order Protection (4% of total) ---
     if order.order_protection:
         protection_price_cents = int(total_price_cents * 0.04)
+        print(f"[DEBUG] Adding Order Protection: {protection_price_cents / 100:.2f} USD")
         line_items.append({
             "price_data": {
                 "currency": "usd",
@@ -103,42 +87,73 @@ def create_stripe_session(order :Order, domain):
             "quantity": 1,
         })
 
-
-
+    # --- Handle discounts (combined logic) ---
     coupon_data = None
-    if order.coupon_code:
+
+    if order.coupon_code and order.discount_percent and order.discount_percent > 0:
         coupon = get_coupon_by_promo_code(order.coupon_code)
         if coupon:
-            print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
-            # Create discount object correctly
-            coupon_data = stripe.checkout.Session.CreateParamsDiscount(
-                # Use "promotion_code" if it's a customer-facing code
-                # Or use "coupon" if it's a direct coupon ID
-                coupon= coupon.id
+            first = float(coupon.percent_off or 0)
+            second = float(order.discount_percent or 0)
+            combined_discount = 100 - ((100 - first) * (100 - second) / 100)
+
+            print(f"[DEBUG] Applying combined discount: {first}% (coupon) + {second}% (extra) = {combined_discount:.2f}%")
+
+            temp_coupon = stripe.Coupon.create(
+                percent_off=combined_discount,
+                duration="once",
+                max_redemptions=1,
+                name=f"Combined {first}% + {second}%",
             )
-    # print("Creating Stripe session with line items:", json.dumps(line_items, indent=4))
+            coupon_data = {"coupon": temp_coupon.id}
+            print(f"[DEBUG] Created temp combined coupon: {temp_coupon.id}")
+
+    elif order.coupon_code:
+        coupon = get_coupon_by_promo_code(order.coupon_code)
+        if coupon:
+            print(f"[DEBUG] Applying coupon from DB: {coupon.id} - {coupon.percent_off}% off")
+            coupon_data = {"coupon": coupon.id}
+
+    elif order.discount_percent and order.discount_percent > 0:
+        discount_value = float(order.discount_percent)
+        print(f"[DEBUG] Applying single discount_percent: {discount_value}%")
+        temp_coupon = stripe.Coupon.create(
+            percent_off=discount_value,
+            duration="once",
+            max_redemptions=1,
+            name=f"Discount {discount_value}%",
+        )
+        coupon_data = {"coupon": temp_coupon.id}
+        print(f"[DEBUG] Created temp discount coupon: {temp_coupon.id}")
+
+    print("[DEBUG] Final line items:", json.dumps(line_items, indent=2))
+
+    # --- Create Checkout Session ---
     session = stripe.checkout.Session.create(
-        payment_method_types=["card","link"],
+        payment_method_types=["card", "link"],
         mode="payment",
         line_items=line_items,
         success_url=f"{domain}?status=success&session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{domain}?status=cancel",
         metadata={
-            "order_id": str(order.id), # type: ignore
-            "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else ""  ,
+            "order_id": str(order.id),  # type: ignore
+            "contact_name": (order.contact_first_name + " " + order.contact_last_name)
+            if order.contact_first_name and order.contact_last_name
+            else "",
             "contact_phone": order.contact_phone_sched or "",
             "contact_email": order.contact_email_sched or "",
             "preferred_datetime": order.preferred_datetime.isoformat() if order.preferred_datetime else "",
-            "unit": order.unit or ""
+            "unit": order.unit or "",
         },
-        # allow_promotion_codes=True,
         discounts=[coupon_data] if coupon_data else [],
         payment_intent_data={
-        "capture_method": "manual",
-    }
+            "capture_method": "manual",
+        },
     )
 
+    print(f"[DEBUG] Stripe Checkout Session created: {session.id}")
     return session
+
 
 
 def get_coupon_by_promo_code(code)-> stripe_coupon |None:
