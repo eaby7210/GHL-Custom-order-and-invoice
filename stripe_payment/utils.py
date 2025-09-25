@@ -10,22 +10,38 @@ import json
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-def create_stripe_session(order :Order, domain):
+def create_stripe_session(order: Order, domain):
     """
     Creates a Stripe Checkout Session for the given order.
     `domain` should be something like 'https://yourfrontenddomain.com'
     """
     line_items = []
 
-
     if order.service_type == "bundled":
-        if order.bundle_item:
+        # Get all bundles for this order
+        bundles = order.bundles.all()
+        
+        if bundles.exists():
+            for bundle in bundles:
+                line_items.append({
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {
+                            "name": bundle.name,
+                            "description": f"Bundle - {bundle.description}" if bundle.description else f"Bundle - {bundle.name}",
+                        },
+                        "unit_amount": int(float(bundle.price) * 100),
+                    },
+                    "quantity": 1,
+                })
+        else:
+            # Fallback if no bundles found
             line_items.append({
                 "price_data": {
                     "currency": "usd",
                     "product_data": {
-                        "name": order.bundle_item,
-                        "description": f"Bundle - {order.bundle_item} of {order.bundle_group} group",
+                        "name": "Bundled Service",
+                        "description": "Bundle service",
                     },
                     "unit_amount": int((order.total_price if order and order.total_price else 0) * 100),
                 },
@@ -70,24 +86,6 @@ def create_stripe_session(order :Order, domain):
 
     total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
 
-    # if order.discount_percent and order.discount_percent > 0:
-    #     discount_amount_cents = int(total_price_cents * (float(order.discount_percent) / 100))
-    #     discounted_total_cents = total_price_cents - discount_amount_cents
-
-    #     # Replace line items with a single consolidated item
-    #     line_items = [{
-    #         "price_data": {
-    #             "currency": "usd",
-    #             "product_data": {
-    #                 "name": "Services (discount applied)",
-    #                 "description": f"Includes {order.discount_percent}% discount",
-    #             },
-    #             "unit_amount": discounted_total_cents,
-    #         },
-    #         "quantity": 1,
-    #     }]
-    #     total_price_cents = discounted_total_cents
-
     # --- Add Order Protection  ---
     if order.order_protection:
         protection_price_cents = int(total_price_cents * 0.04)
@@ -102,8 +100,6 @@ def create_stripe_session(order :Order, domain):
             },
             "quantity": 1,
         })
-
-
 
     coupon_data = None
     if order.coupon_code:
@@ -131,7 +127,7 @@ def create_stripe_session(order :Order, domain):
             "preferred_datetime": order.preferred_datetime.isoformat() if order.preferred_datetime else "",
             "unit": order.unit or ""
         },
-        # allow_promotion_codes=True,
+        allow_promotion_codes=True,
         discounts=[coupon_data] if coupon_data else [],
         payment_intent_data={
         "capture_method": "manual",
