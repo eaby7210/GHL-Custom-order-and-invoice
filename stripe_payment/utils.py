@@ -128,7 +128,7 @@ def create_stripe_session(order: Order, domain):
             "unit": order.unit or ""
         },
         allow_promotion_codes=True,
-        discounts=[coupon_data] if coupon_data else [],
+        # discounts=[coupon_data] if coupon_data else [],
         payment_intent_data={
         "capture_method": "manual",
     }
