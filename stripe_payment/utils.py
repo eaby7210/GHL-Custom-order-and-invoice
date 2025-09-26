@@ -6,6 +6,7 @@ from stripe_payment.models import (
     Coupon, Order,ALaCarteService,
     
 )
+from decimal import Decimal
 import json
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -88,15 +89,15 @@ def create_stripe_session(order: Order, domain):
 
     # --- Add Order Protection  ---
     if order.order_protection:
-        protection_price_cents = int(total_price_cents * 0.04)
+        print(order.order_protection_price, type(order.order_protection_price))
         line_items.append({
             "price_data": {
                 "currency": "usd",
                 "product_data": {
                     "name": "Order Protection",
-                    "description": "Optional order protection (4% of order total)",
+                    "description": "Optional order protection",
                 },
-                "unit_amount": protection_price_cents,
+                "unit_amount": int(Decimal(order.order_protection_price)*100),
             },
             "quantity": 1,
         })

@@ -1,5 +1,7 @@
 from django.db import models
 from decimal import Decimal
+import json
+
 
 
 class Order(models.Model):
@@ -90,6 +92,7 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     invoice_id = models.CharField(max_length=50, null=True, blank=True)
     order_protection = models.BooleanField(default=False)
+    order_protection_price =models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
     
@@ -138,7 +141,7 @@ class ALaCarteService(models.Model):
             )
 
             for item_data in data.get("form", {}).get("items", []):
-                ALaCarteItem.from_api(service, item_data, data.get("form", {}))
+                ALaCarteItem.from_api(service, item_data, data.get("form", {}), recieved_data.get("serviceTotals",{}))
 
         return order
 
@@ -166,14 +169,15 @@ class ALaCarteItem(models.Model):
         return f"{self.title} ({self.service.title})"
 
     @classmethod
-    def from_api(cls, service, data, form_data=None):
+    def from_api(cls, service, data, form_data=None, service_totals=None):
+        print(f"Service Totals {json.dumps(service_totals.get(service.service_id, {}).get("items",{}).get(data.get("id"),{}), indent=4)}")
         form_options = data.get("options", {})
         item = cls.objects.create(
             service=service,
             item_id=data.get("id"),
             title=data.get("title"),
             subtitle=data.get("subtitle"),
-            price=data.get("price"),
+            price=service_totals.get(service.service_id, {}).get("items",{}).get(data.get("id"),{}).get("discountedPrice",0),
             base_price=data.get("basePrice"),
             protection_invalid=data.get("protectionInvalid", False),
             options_type=form_options.get("type", "none"),

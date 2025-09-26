@@ -56,6 +56,24 @@ class FormSubmissionAPIView(APIView):
                 print(f"Coupon not found or invalid: {coupon_code}")
         else:
             print("No coupon code provided.")
+        if (not company_id) or (not user_id):
+            msg = "Company ID and User ID are required."
+            return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            response = NotaryDashServices.get_client(company_id)
+            if not response:
+                return Response({"message":"Error on fetching Client"},status=status.HTTP_400_BAD_REQUEST)
+            else:
+                owner_id = response.get("data",{}).get("owner_id")
+                company_name = response.get("data",{}).get("company_name")
+                print(f"Company name {company_name}")
+                if not owner_id:
+                    print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
+                    return Response({"message":"Error on fetching Owner ID"},status=status.HTTP_400_BAD_REQUEST)
+                client = NotaryDashServices.get_client_one_user(company_id,user_id)
+                if not client:
+                    return Response({"message":"Error on fetching Client User"},status=status.HTTP_400_BAD_REQUEST)
+            
          
         postal_code = data.get("postalCode")
         unit_type = data.get("unitType")
@@ -129,7 +147,8 @@ class FormSubmissionAPIView(APIView):
             # For bundled services, total_price will be calculated from bundle prices
             # For a_la_carte, use the provided total
             total_price = data.get("a_la_carte_total") if service_type == "a_la_carte" else None,
-            order_protection= data.get("order_protection")
+            order_protection= data.get("order_protection"),
+            order_protection_price = str(data.get("order_protection_price", '0.00'))
         )
   
         #Save bundles
@@ -374,11 +393,8 @@ def stripe_webhook(request):
         print(f"⚠️ Unhandled event type: {event_type}")
         return HttpResponse(status=200)  # Changed from 500 to 200 for unhandled events
     
-    print("=== STRIPE WEBHOOK COMPLETED ===")
-    return HttpResponse(status=500)
+
     
-    
- 
 
 def format_phone_number(phone):
     # Remove all non-digit characters
@@ -601,16 +617,10 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     print(f"Session obj: {session_obj}")
     print(f"Client user: {client_user}")
     
-    final_price = float(order.total_price) if order.total_price else 0
-    discount_amount = inv_data.get("discount",{}).get("value",0)
-    total_amount = session_obj.amount_total if session_obj else None
-    total_amount = total_amount/100 if total_amount else None
-    print(f"final price= {final_price} - discount: {discount_amount} {total_amount}")
-    final_price = final_price - discount_amount
+    final_price = session_obj.amount_total/100 if session_obj else 0
+  
     company_id = order.company_id
     client_id = order.user_id
-    
-    print(f"Company ID: {company_id}, Client ID: {client_id}")
     
     html_content = render_to_string(
         "order_product_detail.html", 
@@ -627,15 +637,14 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             }
     )
     
-    print(f"HTML content length: {len(html_content) if html_content else 0}")
-    print(f"Order HTML content length: {len(order_html_content) if order_html_content else 0}")
+
     
     notary_product={
         "client_id": company_id,
         "owner_id": order.owner_id,
         "name": prd_name,
         "pay_to_notary": 0,
-        "charge_client": total_amount if total_amount else final_price,
+        "charge_client": final_price,
         "scanbacks_required": False,
         "attr": {
             "additional_instructions": html_content,
@@ -725,7 +734,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
         print(f"=== BUILD NOTARY ORDER DEBUG END (FAILURE) ===")
         return None
         
-def build_invoice_payload(order , contact, location_id, session_obj,client_user):
+def build_invoice_payload(order: Order , contact, location_id, session_obj,client_user):
     """
     Build JSON payload for invoice based on given order.
     """
@@ -758,8 +767,10 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
 
     items = []
     notary_product_names = []
+    session_total_price = session_obj.amount_total/100 if session_obj else 0
     total_bundle_price = 0
-    
+
+
     if order.service_type == "a_la_carte":
         print(f"Processing A LA CARTE service type")
         
@@ -767,39 +778,21 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
         print(f"Found {services.count()} a_la_carte services")
         
         for service in services:
-            print(f"Processing service: {service.name}")
+            print(f"Processing service: {service.title}")
             # Main service item
             notary_product_names.append(service.reduced_names)
             items.append(build_item(
-                name=service.name,
+                name=service.title,
                 description=service.description,
             
                 price=service.price
             ))
+
+            
             print(f"Added main service item: {service.name}, price: {service.price}")
 
-            # Submenu (if exists)
-            if hasattr(service, "submenu"):
-                submenu = service.submenu
-                print(f"Processing submenu: {submenu}")
-                items.append(build_item(
-                    name=f"{service.name} submenu {("- "+ submenu.label) if submenu.label else ""}",
-                    description=f"{("Selected option: "+ submenu.option + " -") if submenu.option else ""} {"Prompt: " + submenu.prompt_label if submenu.prompt_label else ""} - {submenu.prompt_value if submenu.prompt_value else ""}",
-                    price=submenu.amount
-                ))
-                print(f"Added submenu item, price: {submenu.amount}")
 
-            # Addons
-            addons = service.addons.all()
-            print(f"Found {addons.count()} addons for service {service.name}")
-            for addon in addons:
-                print(f"Processing addon: {addon.name}, price: {addon.price}")
-                items.append(build_item(
-                    name=f"{service.name} - {addon.name}",
-                    description=f"Addon for {service.name}",
-            
-                    price=addon.price
-                ))
+
                 
     elif order.service_type == "bundle":
         print(f"Processing BUNDLED service type")
@@ -818,6 +811,11 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
                 if bundle.description:
                     bundle_descriptions.append(bundle.description)
                 total_bundle_price += float(bundle.price)
+                items.append(build_item(
+                    name=bundle.name,
+                    description=bundle.description,
+                    price=bundle.price
+                ))
             
             print(f"Total bundle price calculated: {total_bundle_price}")
             
@@ -831,11 +829,7 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
             notary_product_names.append(combined_name)
             
             # Create single combined item for all bundles
-            items.append(build_item(
-                name=combined_name,
-                description=combined_description,
-                price=total_bundle_price
-            ))
+            
             print(f"Added combined bundle item with total price: {total_bundle_price}")
         else:
             # Fallback if no bundles found (shouldn't happen but safety check)
@@ -847,6 +841,14 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
                 price=order.total_price or 0
             ))
     
+    if order.order_protection ==True:
+        notary_product_names.append("with Protection")
+        items.append(build_item(
+                    name="Order Protection",
+                    description="Optional Order Protection",
+                    price=order.order_protection_price
+                ))
+
     notary_product_names = " ".join(notary_product_names)
     print(f"Final notary product names: {notary_product_names}")
     print(f"Total items created: {len(items)}")
