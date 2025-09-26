@@ -56,23 +56,6 @@ class FormSubmissionAPIView(APIView):
                 print(f"Coupon not found or invalid: {coupon_code}")
         else:
             print("No coupon code provided.")
-        # if (not company_id) or (not user_id):
-        #     msg = "Company ID and User ID are required."
-        #     return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
-        # else:
-        #     response = NotaryDashServices.get_client(company_id)
-        #     if not response:
-        #         return Response({"message":"Error on fetching Client"},status=status.HTTP_400_BAD_REQUEST)
-        #     else:
-        #         owner_id = response.get("data",{}).get("owner_id")
-        #         company_name = response.get("data",{}).get("company_name")
-        #         if not owner_id:
-        #             print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
-        #             return Response({"message":"Error on fetching Owner ID"},status=status.HTTP_400_BAD_REQUEST)
-        #         client = NotaryDashServices.get_client_one_user(company_id,user_id)
-        #         if not client:
-        #             return Response({"message":"Error on fetching Client User"},status=status.HTTP_400_BAD_REQUEST)
-            
          
         postal_code = data.get("postalCode")
         unit_type = data.get("unitType")
@@ -87,7 +70,8 @@ class FormSubmissionAPIView(APIView):
         preferred_datetime = parse_datetime(data.get("preferred_datetime")) if data.get("preferred_datetime") else None
         if preferred_datetime is not None:
             preferred_datetime = make_aware(preferred_datetime)
-        # Create order
+            
+        # Create order (removed bundle_group and bundle_item fields)
         order = Order.objects.create(
             unit_type=unit_type,
             address=address,
@@ -99,8 +83,6 @@ class FormSubmissionAPIView(APIView):
             service_type=service_type,
             accepted_at=accepted_at,
             preferred_datetime=preferred_datetime,
-            bundle_group=data.get("bundleGroup"),
-            bundle_item=data.get("bundleItem"),
          
             occupancy_vacant = occupancy_status == "vacant",
             occupancy_occupied = occupancy_status == "occupied",
@@ -144,22 +126,32 @@ class FormSubmissionAPIView(APIView):
             owner_id=owner_id,
             
             company_name=company_name,
-            total_price = Decimal(data.get("bundlePrice", 0)) if data.get("bundlePrice") else data.get("a_la_carte_total"),
+            # For bundled services, total_price will be calculated from bundle prices
+            # For a_la_carte, use the provided total
+            total_price = data.get("a_la_carte_total") if service_type == "a_la_carte" else None,
             order_protection= data.get("order_protection")
         )
   
         #Save bundles
         bundles_data = data.get("bundles", [])
+        total_bundle_price = Decimal('0.00')
+        
         for b in bundles_data:
+            bundle_price = Decimal(str(b.get("price", 0)))
+            total_bundle_price += bundle_price
+            
             Bundle.objects.create(
                 order=order,
                 name=b.get("name"),
                 description=b.get("description"),
                 base_price=Decimal(str(b.get("basePrice", 0))),
-                price=Decimal(str(b.get("price", 0))),
+                price=bundle_price,
             )
-
-    
+        
+        # Update order total_price for bundled services
+        if service_type == "bundled" and total_bundle_price > 0:
+            order.total_price = total_bundle_price
+            order.save()
 
         # Handle A La Carte services
         if service_type == "a_la_carte":
@@ -169,14 +161,11 @@ class FormSubmissionAPIView(APIView):
            ALaCarteService.from_api(order,data)
                
         frontend_domain = request.headers.get("Origin") 
-        # if not frontend_domain:
-        #     frontend_domain = "http://localhost:5173"
         print(f"Frontend domain: {frontend_domain}")
 
         try:
             stripe_session = create_stripe_session(order, frontend_domain)
             order.stripe_session_id = stripe_session.id
-
 
             order.save()
             return Response({
@@ -206,10 +195,6 @@ class FormSubmissionAPIView(APIView):
             return self._handle_response(request, {"error": "Order not found"}, status.HTTP_404_NOT_FOUND)
 
     def _handle_response(self, request, data, status_code):
-        # If HTML is expected (Browsable API), render custom template
-        # print(f"format: {request.accepted_renderer.format}")
-        # print(f"accepted_media_type: {request.accepted_media_type}")
-        # print(f"data: {json.dumps(data, indent=4)}")
         if request.accepted_media_type == 'text/html':
             data["items"] = data.pop("invoiceItems", data.get("items", []))
 
@@ -268,90 +253,128 @@ def stripe_coupon(request, coupon_code):
       
 @csrf_exempt
 def stripe_webhook(request):
-        
+    print("=== STRIPE WEBHOOK RECEIVED ===")
+    print(f"Request method: {request.method}")
+    print(f"Request path: {request.path}")
+    
     payload = request.body
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', None)
-    print(f"Stripe webhook received with payload: {payload}")
-    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
-    # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
-
+    print(f"Stripe webhook received with payload length: {len(payload)}")
+    print(f"Signature header present: {sig_header is not None}")
+    
+    endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
+    print(f"Webhook secret configured: {bool(endpoint_secret)}")
+    
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, endpoint_secret
-        )
+        event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+        print("✅ Webhook signature verified successfully")
     except ValueError as e:
-        # Invalid payload
+        print(f"❌ Invalid payload: {e}")
         return HttpResponse(status=400)
     except SignatureVerificationError as e:
-        # Invalid signature
+        print(f"❌ Invalid signature: {e}")
         return HttpResponse(status=400)
+    
     event_id = event.get('id', None)
     event_created = event.get('created', None)
-    # Process the event type
     event_type = event['type']
+    
+    print(f"Event ID: {event_id}")
     print(f"Event type: {event_type}")
+    print(f"Event created: {event_created}")
+    
     data_object = event['data']['object']
+    
+    # Check if event already processed
     evt_log = StripeWebhookEventLog.objects.filter(event_id=event_id).first()
     if evt_log:
-        print(f"Event {event_id} already processed at {evt_log.created_at}")
+        print(f"⚠️ Event {event_id} already processed at {evt_log.created_at}")
         return HttpResponse(status=200)
+    
+    # Create event log
     evt_log = StripeWebhookEventLog(
         event_id=event_id,
         event_type=event_type,
         created_at=make_aware(datetime.datetime.fromtimestamp(event_created)) if event_created else None,
         event_data=json.dumps(data_object, indent=4),
     )
-    payment_indent_id = data_object.get("payment_intent", None) 
-
-    # print(f"Received Stripe event: {payload} event: {json.dumps(event, indent=4)}")
-    # print("Event: \n", json.dumps(event,indent=4))
+    
+    payment_indent_id = data_object.get("payment_intent", None)
+    print(f"Payment intent ID: {payment_indent_id}")
+    
+    # Handle different event types
     if event_type == 'charge.succeeded':
+        print("Processing charge.succeeded...")
         handle_charge_succeeded(event)
         return HttpResponse(status=200)
+        
     elif event_type == 'charge.failed':
+        print("Processing charge.failed...")
         handle_charge_failed(event)
         return HttpResponse(status=200)
+        
     elif event_type == 'charge.refunded':
+        print("Processing charge.refunded...")
         handle_charge_refunded(event)
         return HttpResponse(status=200)
+        
     elif event_type == 'charge.updated':
+        print("Processing charge.updated...")
         handle_charge_updated(event)
         return HttpResponse(status=200)
+        
     elif event_type == 'checkout.session.completed':
+        print("=== Processing checkout.session.completed ===")
+        print(f"Session ID: {data_object.get('id')}")
+        print(f"Payment status: {data_object.get('payment_status')}")
+        print(f"Amount total: {data_object.get('amount_total')}")
+        
         session_obj = handle_checkout_session_completed(event)
-        print(f"Checkout session completed: {json.dumps(event, indent=4)}")
+        print(f"handle_checkout_session_completed returned: {session_obj is not None}")
+        
         if not session_obj:
             msg = "Failed to process CheckoutSession. Expiring session due to server error."
+            print(f"❌ {msg}")
             evt_log.error_message = msg
             evt_log.processed = True
             evt_log.save()
             
-            # ✅ Proper way to cancel when using manual capture with Checkout
+            # Expire the session
             try:
                 stripe.checkout.Session.expire(data_object.get("id"))
+                print("✅ Session expired successfully")
             except Exception as e:
-                print(f"Failed to expire session: {e}")
+                print(f"❌ Failed to expire session: {e}")
             
             return HttpResponse(status=500)
         else:
+            print("✅ Session processed successfully, attempting to capture payment...")
             try:
-                stripe.PaymentIntent.capture(payment_indent_id)
+                if payment_indent_id:
+                    stripe.PaymentIntent.capture(payment_indent_id)
+                    print("✅ Payment captured successfully")
+                else:
+                    print("⚠️ No payment intent ID found")
+                
                 evt_log.error_message = "No errors"
                 evt_log.processed = True
                 evt_log.save()
-
+                print("✅ Event log saved successfully")
+                
             except StripeError as e:
-                # Handle capture failure
-                msg = e.user_message
+                msg = e.user_message or str(e)
+                print(f"❌ Payment capture failed: {msg}")
                 evt_log.error_message = msg
-                evt_log.processed =True
+                evt_log.processed = True
                 evt_log.save()
                 return HttpResponse(status=500)
+            
             return HttpResponse(status=200)
-
     else:
-        print(f"Unhandled event type: {event_type}")
+        print(f"⚠️ Unhandled event type: {event_type}")
+        return HttpResponse(status=200)  # Changed from 500 to 200 for unhandled events
     
+    print("=== STRIPE WEBHOOK COMPLETED ===")
     return HttpResponse(status=500)
     
     
@@ -414,59 +437,85 @@ def handle_charge_updated(event):
     # Optional: update metadata, receipt URL, etc.
       
 def handle_checkout_session_completed(event):
-    # print(f"Checkout session completed: {json.dumps(event, indent=4)}")
-    obj = event['data']['object']
-    session_id = obj["id"]
-    order_obj = Order.objects.filter(stripe_session_id=session_id).first()
+    print("=== HANDLE_CHECKOUT_SESSION_COMPLETED STARTED ===")
+    print(f"Event received: {event.get('type', 'Unknown')}")
     
-    if order_obj:
+    try:
+        obj = event['data']['object']
+        session_id = obj["id"]
+        print(f"Session ID: {session_id}")
+        
+        order_obj = Order.objects.filter(stripe_session_id=session_id).first()
+        print(f"Order found: {order_obj is not None}")
+        
+        if not order_obj:
+            print("ERROR: No order found with this session ID")
+            return None
+        
+        print(f"Order ID: {order_obj.id}, Company ID: {order_obj.company_id}, User ID: {order_obj.user_id}")
+        
         # contact_name = (order_obj.contact_first_name_sched + " " + order_obj.contact_last_name_sched) if order_obj.contact_first_name_sched and order_obj.contact_last_name_sched else ""
         company_id = order_obj.company_id
-        user_id= order_obj.user_id
+        user_id = order_obj.user_id
+        
+        print("Calling NotaryDashServices.get_client_one_user...")
         client_user = NotaryDashServices.get_client_one_user(company_id, user_id)
         client_user = client_user.get("data", {}) if client_user else {}
+        print(f"Client user retrieved: {bool(client_user)}")
+        
         contact_phone = format_phone_number(order_obj.contact_phone_sched)
         contact_email = client_user.get("email")
+        print(f"Contact phone: {contact_phone}, Contact email: {contact_email}")
+        
+        print("Getting OAuth token...")
         token_obj = OAuthServices.get_valid_access_token_obj()
-        search_response = ContactServices.search_contacts(token_obj.LocationId,query={
-             "locationId":"n7iGMwfy1T5lZZacxygj",
-                "page": 1,
-                "pageLimit": 20,
-                "filters": [
-                    {
+        print(f"Token location ID: {token_obj.LocationId if token_obj else 'None'}")
+        
+        print("Searching for existing contacts...")
+        search_response = ContactServices.search_contacts(token_obj.LocationId, query={
+            "locationId": "n7iGMwfy1T5lZZacxygj",
+            "page": 1,
+            "pageLimit": 20,
+            "filters": [
+                {
                     "field": "email",
                     "operator": "eq",
                     "value": contact_email
-                    },
-                     {
+                },
+                {
                     "field": "phone",
                     "operator": "eq",
                     "value": contact_phone
-                    },
-                ],
-                "sort": [
-                    {
+                },
+            ],
+            "sort": [
+                {
                     "field": "dateAdded",
                     "direction": "desc"
-                    }
-                ]
+                }
+            ]
         })
-        print(json.dumps(search_response, indent=4))
+        
+        print(f"Contact search response: {json.dumps(search_response, indent=4)}")
+        
         if len(search_response.get("contacts", [])) > 0:
             contact_data = search_response["contacts"][0]
             print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
         else:
-            contact ={
-            "firstName":order_obj.contact_first_name_sched if order_obj.contact_first_name_sched else "",
-            "lastName": order_obj.contact_last_name_sched if order_obj.contact_last_name_sched else "",
-            # "name": contact_name,
-            "locationId": token_obj.LocationId,
-            "email": contact_email,
-            "phone": contact_phone,
-            "country": "US",  
-            "type": "customer"  
+            print("Creating new contact...")
+            contact = {
+                "firstName": order_obj.contact_first_name_sched if order_obj.contact_first_name_sched else "",
+                "lastName": order_obj.contact_last_name_sched if order_obj.contact_last_name_sched else "",
+                # "name": contact_name,
+                "locationId": token_obj.LocationId,
+                "email": contact_email,
+                "phone": contact_phone,
+                "country": "US",  
+                "type": "customer"  
             }
             contact_data, status = ContactServices.post_contact(token_obj.LocationId, contact)
+            print(f"Contact creation status: {status}")
+            
             if status != 201:
                 contact_id = contact_data.get("meta", {}).get("contactId", None)
                 print(f"Contact creation failed with status {status}. Attempting to retrieve existing contact by ID: {contact_id}")
@@ -475,25 +524,50 @@ def handle_checkout_session_completed(event):
                     contact_data["id"] = contact_id
                     # print(f"Contact creation conflicted with: {contact_data.get('id')} Using {json.dumps(contact_data, indent=4)}")
             ContactServices.save_contact(contact_data)
+        
+        print("=== ABOUT TO CALL BUILD_INVOICE_PAYLOAD ===")
+        print(f"Parameters: order_obj={order_obj.id}, contact={contact_data.get('id', 'Unknown')}, location_id={token_obj.LocationId}")
+        
         invoice_payload = build_invoice_payload(
             order_obj, contact=contact_data, location_id=token_obj.LocationId,
-            session_obj=obj,client_user=client_user
+            session_obj=obj, client_user=client_user
         )
+        
+        print("=== BUILD_INVOICE_PAYLOAD COMPLETED ===")
+        print(f"Invoice payload returned: {invoice_payload is not None}")
+        
         if not invoice_payload:
+            print("ERROR: build_invoice_payload returned None")
             return None
         else:
+            print("Calling InvoiceServices.post_invoice...")
             response = InvoiceServices.post_invoice(token_obj.LocationId, invoice_payload)
             print(f"Invoice response: {json.dumps(response, indent=4)}")
+            
             if response:
+                print("Invoice created successfully, updating order...")
                 order_obj.location_id = token_obj.LocationId
                 order_obj.invoice_id = response.get("_id")
                 order_obj.save()
+                print(f"Order updated with invoice_id: {order_obj.invoice_id}")
             else:
                 print("Failed to create invoice, skipping sending and payment recording.")
                 return None
+                
+            print("Sending invoice...")
             send_invoice(response)
+            print("Recording payment...")
             record_payment(response)
-    session_obj ,created = CheckoutSession.objects.update_or_create(
+    
+    except Exception as e:
+        print(f"ERROR in handle_checkout_session_completed: {str(e)}")
+        print(f"Exception type: {type(e).__name__}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return None
+    
+    print("Creating/updating CheckoutSession...")
+    session_obj, created = CheckoutSession.objects.update_or_create(
         session_id=obj["id"],
         defaults={
             "payment_intent": obj.get("payment_intent"),
@@ -508,6 +582,9 @@ def handle_checkout_session_completed(event):
         }
     )
     
+    print(f"CheckoutSession {'created' if created else 'updated'}: {session_obj.session_id}")
+    print("=== HANDLE_CHECKOUT_SESSION_COMPLETED FINISHED ===")
+    
     return session_obj
 
 def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj):
@@ -516,6 +593,14 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     Build Notary order payload based on given order and contact.
 
     """
+    print(f"=== BUILD NOTARY ORDER DEBUG START ===")
+    print(f"Order ID: {order.id}")
+    print(f"Order service_type: {order.service_type}")
+    print(f"Order total_price: {order.total_price}")
+    print(f"Product name passed: {prd_name}")
+    print(f"Session obj: {session_obj}")
+    print(f"Client user: {client_user}")
+    
     final_price = float(order.total_price) if order.total_price else 0
     discount_amount = inv_data.get("discount",{}).get("value",0)
     total_amount = session_obj.amount_total if session_obj else None
@@ -525,6 +610,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     company_id = order.company_id
     client_id = order.user_id
     
+    print(f"Company ID: {company_id}, Client ID: {client_id}")
     
     html_content = render_to_string(
         "order_product_detail.html", 
@@ -540,6 +626,10 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             "order":order
             }
     )
+    
+    print(f"HTML content length: {len(html_content) if html_content else 0}")
+    print(f"Order HTML content length: {len(order_html_content) if order_html_content else 0}")
+    
     notary_product={
         "client_id": company_id,
         "owner_id": order.owner_id,
@@ -552,13 +642,23 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             # "scanbacks_instructions": "alias",
             },
         }
+    
+    print(f"Notary product payload: {json.dumps(notary_product, indent=2)}")
+    
     prd_response = None
     prd = {}
+    print(f"Calling NotaryDashServices.create_products...")
     prd_response = NotaryDashServices.create_products(notary_product)
+    
+    print(f"Product creation response: {prd_response}")
     if prd_response:
         prd = prd_response.get("data", None)
         print(f"prd: {json.dumps(prd, indent=4)}")
+    else:
+        print("ERROR: Product creation failed - no response from NotaryDashServices.create_products")
+        
     formatted_datetime = order.preferred_datetime.strftime("%Y-%m-%d %H:%M:%S") if order.preferred_datetime else "TBD"
+    print(f"Formatted datetime: {formatted_datetime}")
     notary_order = {
         "client_id": company_id,
         "client_contact_id": client_id,
@@ -606,19 +706,36 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             "type": "cosigner"
         }
     
+    print(f"Final notary order payload: {json.dumps(notary_order, indent=2)}")
+    print(f"Calling NotaryDashServices.create_order...")
+    
     ord_response = NotaryDashServices.create_order(notary_order)
-    # print("Notary order response:", json.dumps(ord_response, indent=4))
+    print(f"Order creation response: {ord_response}")
+    
     if ord_response and ord_response.get("data"):
-        inv_data["invoiceNumber"] = str(ord_response.get("data", {}).get("id"))
+        order_id = str(ord_response.get("data", {}).get("id"))
+        print(f"SUCCESS: Notary order created with ID: {order_id}")
+        inv_data["invoiceNumber"] = order_id
+        print(f"Updated inv_data with invoiceNumber: {order_id}")
+        print(f"=== BUILD NOTARY ORDER DEBUG END (SUCCESS) ===")
         return inv_data
     else:
-        
+        print(f"ERROR: Notary order creation failed")
+        print(f"Response details: {json.dumps(ord_response, indent=2) if ord_response else 'None'}")
+        print(f"=== BUILD NOTARY ORDER DEBUG END (FAILURE) ===")
         return None
         
 def build_invoice_payload(order , contact, location_id, session_obj,client_user):
     """
     Build JSON payload for invoice based on given order.
     """
+    print(f"=== BUILD INVOICE PAYLOAD DEBUG START ===")
+    print(f"Order ID: {order.id}")
+    print(f"Order service_type: {order.service_type}")
+    print(f"Location ID: {location_id}")
+    print(f"Contact: {contact}")
+    print(f"Session obj: {session_obj}")
+    print(f"Client user: {client_user}")
 
     def build_item(name, description, price, currency="USD", qty=1):
         return {
@@ -640,10 +757,17 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
         }
 
     items = []
-    notary_product_names=[]
+    notary_product_names = []
+    total_bundle_price = 0
+    
     if order.service_type == "a_la_carte":
+        print(f"Processing A LA CARTE service type")
         
-        for service in order.a_la_carte_services.all():
+        services = order.a_la_carte_services.all()
+        print(f"Found {services.count()} a_la_carte services")
+        
+        for service in services:
+            print(f"Processing service: {service.name}")
             # Main service item
             notary_product_names.append(service.reduced_names)
             items.append(build_item(
@@ -652,33 +776,82 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
             
                 price=service.price
             ))
+            print(f"Added main service item: {service.name}, price: {service.price}")
 
             # Submenu (if exists)
             if hasattr(service, "submenu"):
                 submenu = service.submenu
+                print(f"Processing submenu: {submenu}")
                 items.append(build_item(
                     name=f"{service.name} submenu {("- "+ submenu.label) if submenu.label else ""}",
                     description=f"{("Selected option: "+ submenu.option + " -") if submenu.option else ""} {"Prompt: " + submenu.prompt_label if submenu.prompt_label else ""} - {submenu.prompt_value if submenu.prompt_value else ""}",
                     price=submenu.amount
                 ))
+                print(f"Added submenu item, price: {submenu.amount}")
 
             # Addons
-            for addon in service.addons.all():
+            addons = service.addons.all()
+            print(f"Found {addons.count()} addons for service {service.name}")
+            for addon in addons:
+                print(f"Processing addon: {addon.name}, price: {addon.price}")
                 items.append(build_item(
                     name=f"{service.name} - {addon.name}",
                     description=f"Addon for {service.name}",
             
                     price=addon.price
                 ))
-    elif order.service_type == "bundled":
-        notary_product_names.append(order.bundle_item)
-        items.append(build_item(
-            name=order.bundle_item,
-            description=order.bundle_group,
-            price=order.total_price
-        ))
+                
+    elif order.service_type == "bundle":
+        print(f"Processing BUNDLED service type")
+        # Get all bundles for this order
+        bundles = order.bundles.all()
+        print(f"Found {bundles.count()} bundles for order")
+        
+        if bundles.exists():
+            # Combine all bundle names and descriptions
+            bundle_names = []
+            bundle_descriptions = []
+            
+            for bundle in bundles:
+                print(f"Processing bundle: {bundle.name}, price: {bundle.price}, description: {bundle.description}")
+                bundle_names.append(bundle.name)
+                if bundle.description:
+                    bundle_descriptions.append(bundle.description)
+                total_bundle_price += float(bundle.price)
+            
+            print(f"Total bundle price calculated: {total_bundle_price}")
+            
+            # Create combined name and description
+            combined_name = " + ".join(bundle_names)
+            combined_description = " | ".join(bundle_descriptions) if bundle_descriptions else ""
+            
+            print(f"Combined name: {combined_name}")
+            print(f"Combined description: {combined_description}")
+            
+            notary_product_names.append(combined_name)
+            
+            # Create single combined item for all bundles
+            items.append(build_item(
+                name=combined_name,
+                description=combined_description,
+                price=total_bundle_price
+            ))
+            print(f"Added combined bundle item with total price: {total_bundle_price}")
+        else:
+            # Fallback if no bundles found (shouldn't happen but safety check)
+            print("WARNING: No bundles found for bundled order - using fallback")
+            notary_product_names.append("Bundled Service")
+            items.append(build_item(
+                name="Bundled Service",
+                description="No bundle details available",
+                price=order.total_price or 0
+            ))
+    
     notary_product_names = " ".join(notary_product_names)
-    print(f"Notary product names: {notary_product_names}")
+    print(f"Final notary product names: {notary_product_names}")
+    print(f"Total items created: {len(items)}")
+    print(f"Items: {json.dumps(items, indent=2)}")
+    
     address={
             "addressLine1":  order.unit or "",
             # "addressLine2": order.unit or "",
@@ -690,6 +863,8 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
     contact_ph = format_phone_number(order.contact_phone_sched)
     print(f"Formatted contact phone: {contact_ph}")
     print(f"discount amount: {session_obj.total_details.amount_discount}")
+    
+    print(f"Building invoice data structure...")
     invoice_data = {
         "altId": location_id,
         "altType": "location",
@@ -739,8 +914,19 @@ def build_invoice_payload(order , contact, location_id, session_obj,client_user)
         "attachments": []
     }
     
+    print(f"Initial invoice data created with invoiceNumber: {invoice_data['invoiceNumber']}")
+    print(f"Calling build_notary_order with product names: {notary_product_names}")
+    
     invoice_data = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names, client_user=client_user, session_obj=session_obj)
-    print("Invoice data payload:", json.dumps(invoice_data, indent=4))
+    
+    if invoice_data:
+        print("Invoice data payload:", json.dumps(invoice_data, indent=4))
+        print(f"Final invoice data has invoiceNumber: {invoice_data.get('invoiceNumber')}")
+        print(f"=== BUILD INVOICE PAYLOAD DEBUG END (SUCCESS) ===")
+    else:
+        print("ERROR: build_notary_order returned None")
+        print(f"=== BUILD INVOICE PAYLOAD DEBUG END (FAILURE) ===")
+        
     return invoice_data
 
 def send_invoice(invoice_data):

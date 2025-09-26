@@ -24,8 +24,7 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = [
             "id", "unit_type", "address", "streetAddress", "city", "state",
-            "postal_code", "unit", "service_type", "bundle_group",
-            "bundle_item", "total_price", "occupancy_vacant",
+            "postal_code", "unit", "service_type", "total_price", "occupancy_vacant",
             "occupancy_occupied", "access_lock_box", "lock_box_code",
             "lock_box_location", "access_app_lock_box", "access_meet_contact",
             "access_hidden_key", "hidden_key_directions", "access_community_access",

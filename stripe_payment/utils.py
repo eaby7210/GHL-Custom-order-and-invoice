@@ -17,7 +17,7 @@ def create_stripe_session(order: Order, domain):
     """
     line_items = []
 
-    if order.service_type == "bundled":
+    if order.service_type == "bundle":
         # Get all bundles for this order
         bundles = order.bundles.all()
         
