@@ -281,7 +281,8 @@ def stripe_webhook(request):
     print(f"Stripe webhook received with payload length: {len(payload)}")
     print(f"Signature header present: {sig_header is not None}")
     
-    endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
+    # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
+    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
     print(f"Webhook secret configured: {bool(endpoint_secret)}")
     
     try:
@@ -779,18 +780,18 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
         
         for service in services:
             print(f"Processing service: {service.title}")
-            # Main service item
-            notary_product_names.append(service.reduced_names)
-            items.append(build_item(
-                name=service.title,
-                description=service.description,
-            
-                price=service.price
-            ))
 
-            
-            print(f"Added main service item: {service.name}, price: {service.price}")
+            # loop through all items under this service
+            for item in service.items.all():
+                print(f"   Processing item: {item.title}")
 
+                items.append(build_item(
+                    name=item.title,            
+                    description=item.subtitle,   
+                    price=item.price             
+                ))
+
+                print(f"   ➕ Added item: {item.title}, price: {item.price}")
 
 
                 
