@@ -395,7 +395,6 @@ def stripe_webhook(request):
         return HttpResponse(status=200)  # Changed from 500 to 200 for unhandled events
     
 
-    
 
 def format_phone_number(phone):
     # Remove all non-digit characters

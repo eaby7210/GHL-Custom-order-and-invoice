@@ -48,11 +48,11 @@ else:
 
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['go.investorbootz.com']
 
-CORS_ALLOWED_ORIGINS = ['http://localhost:3000','http://localhost:5173']
+CORS_ALLOWED_ORIGINS = ['http://localhost:3000','http://localhost:5173','https://go.investorbootz.com']
 
-CSRF_TRUSTED_ORIGINS = ['http://localhost:3000','http://localhost:5173']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:3000','http://localhost:5173','https://go.investorbootz.com']
 
 
 # Application definition
