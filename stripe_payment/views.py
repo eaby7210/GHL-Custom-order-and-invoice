@@ -283,8 +283,8 @@ def stripe_webhook(request):
     print(f"Stripe webhook received with payload length: {len(payload)}")
     print(f"Signature header present: {sig_header is not None}")
     
-    # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
-    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
+    endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
+    # endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
     print(f"Webhook secret configured: {bool(endpoint_secret)}")
     
     try:
@@ -621,7 +621,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     # print(f"Client user: {client_user}")
     print(f"Order occupancy_status: {getattr(order, 'occupancy_status', None)}")
     print(f"Order occupancy variables : occupied-{order.occupancy_occupied} vacant-{order.occupancy_vacant}")
-    print(f"Order street: {getattr(order, 'street', None)}")
+    print(f"Order street: {getattr(order, 'streetAddress', None)}")
     print(f"Order city: {getattr(order, 'city', None)}")
     print(f"Order state: {getattr(order, 'state', None)}")
     print(f"Order postalCode: {getattr(order, 'postalCode', None)}")
@@ -800,6 +800,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
                     description=item.subtitle,   
                     price=item.price             
                 ))
+                notary_product_names.append(item.item_id)
 
                 print(f"   ➕ Added item: {item.title}, price: {item.price}")
 
@@ -827,6 +828,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
                     description=bundle.description,
                     price=bundle.price
                 ))
+                notary_product_names.append(bundle.name)
             
             print(f"Total bundle price calculated: {total_bundle_price}")
             
