@@ -96,6 +96,7 @@ class FormSubmissionAPIView(APIView):
             state=state,
             city=city,
             postal_code=postal_code,
+            streetAddress = data.get("street"),
             tbd=tbd,
             unit=unit,
             service_type=service_type,
@@ -104,6 +105,7 @@ class FormSubmissionAPIView(APIView):
          
             occupancy_vacant = occupancy_status == "vacant",
             occupancy_occupied = occupancy_status == "occupied",
+            occupancy_status = occupancy_status,
             access_lock_box=data.get("access_lock_box", False),
             lock_box_code=data.get("lock_box_code"),
             lock_box_location=data.get("lock_box_location"),
@@ -512,11 +514,11 @@ def handle_checkout_session_completed(event):
             ]
         })
         
-        print(f"Contact search response: {json.dumps(search_response, indent=4)}")
+        # print(f"Contact search response: {json.dumps(search_response, indent=4)}")
         
         if len(search_response.get("contacts", [])) > 0:
             contact_data = search_response["contacts"][0]
-            print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
+            # print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
         else:
             print("Creating new contact...")
             contact = {
@@ -558,7 +560,7 @@ def handle_checkout_session_completed(event):
         else:
             print("Calling InvoiceServices.post_invoice...")
             response = InvoiceServices.post_invoice(token_obj.LocationId, invoice_payload)
-            print(f"Invoice response: {json.dumps(response, indent=4)}")
+            # print(f"Invoice response: {json.dumps(response, indent=4)}")
             
             if response:
                 print("Invoice created successfully, updating order...")
@@ -613,9 +615,18 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     print(f"Order ID: {order.id}")
     print(f"Order service_type: {order.service_type}")
     print(f"Order total_price: {order.total_price}")
+    print(f"Product name: {prd_name}")
     print(f"Product name passed: {prd_name}")
-    print(f"Session obj: {session_obj}")
-    print(f"Client user: {client_user}")
+    # print(f"Session obj: {session_obj}")
+    # print(f"Client user: {client_user}")
+    print(f"Order occupancy_status: {getattr(order, 'occupancy_status', None)}")
+    print(f"Order occupancy variables : occupied-{order.occupancy_occupied} vacant-{order.occupancy_vacant}")
+    print(f"Order street: {getattr(order, 'street', None)}")
+    print(f"Order city: {getattr(order, 'city', None)}")
+    print(f"Order state: {getattr(order, 'state', None)}")
+    print(f"Order postalCode: {getattr(order, 'postalCode', None)}")
+    print(f"Order contact_phone: {getattr(order, 'contact_phone', None)}")
+
     
     final_price = session_obj.amount_total/100 if session_obj else 0
   
@@ -652,7 +663,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             },
         }
     
-    print(f"Notary product payload: {json.dumps(notary_product, indent=2)}")
+    # print(f"Notary product payload: {json.dumps(notary_product, indent=2)}")
     
     prd_response = None
     prd = {}
@@ -662,7 +673,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     print(f"Product creation response: {prd_response}")
     if prd_response:
         prd = prd_response.get("data", None)
-        print(f"prd: {json.dumps(prd, indent=4)}")
+        # print(f"prd: {json.dumps(prd, indent=4)}")
     else:
         print("ERROR: Product creation failed - no response from NotaryDashServices.create_products")
         
@@ -676,8 +687,8 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             
             "on": formatted_datetime,
             "address": {
-                "address_1": order.streetAddress or order.unit,
-                # "address_2": order.unit or "",
+                "address_1": order.streetAddress or "" ,
+                "address_2": order.unit or "",
                 "city": order.city or "",
                 "zip": order.postal_code or "",
                 "state": order.state or "",
@@ -715,11 +726,11 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             "type": "cosigner"
         }
     
-    print(f"Final notary order payload: {json.dumps(notary_order, indent=2)}")
+    # print(f"Final notary order payload: {json.dumps(notary_order, indent=2)}")
     print(f"Calling NotaryDashServices.create_order...")
     
     ord_response = NotaryDashServices.create_order(notary_order)
-    print(f"Order creation response: {ord_response}")
+    # print(f"Order creation response: {ord_response}")
     
     if ord_response and ord_response.get("data"):
         order_id = str(ord_response.get("data", {}).get("id"))
@@ -730,7 +741,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
         return inv_data
     else:
         print(f"ERROR: Notary order creation failed")
-        print(f"Response details: {json.dumps(ord_response, indent=2) if ord_response else 'None'}")
+        # print(f"Response details: {json.dumps(ord_response, indent=2) if ord_response else 'None'}")
         print(f"=== BUILD NOTARY ORDER DEBUG END (FAILURE) ===")
         return None
         
@@ -742,9 +753,9 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     print(f"Order ID: {order.id}")
     print(f"Order service_type: {order.service_type}")
     print(f"Location ID: {location_id}")
-    print(f"Contact: {contact}")
-    print(f"Session obj: {session_obj}")
-    print(f"Client user: {client_user}")
+    # print(f"Contact: {contact}")
+    # print(f"Session obj: {session_obj}")
+    # print(f"Client user: {client_user}")
 
     def build_item(name, description, price, currency="USD", qty=1):
         return {
@@ -852,11 +863,11 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     notary_product_names = " ".join(notary_product_names)
     print(f"Final notary product names: {notary_product_names}")
     print(f"Total items created: {len(items)}")
-    print(f"Items: {json.dumps(items, indent=2)}")
+
     
     address={
-            "addressLine1":  order.unit or "",
-            # "addressLine2": order.unit or "",
+            "addressLine1": order.streetAddress  or "",
+            "addressLine2": order.unit or "",
             "city": order.city or "",
             "state": order.state or "",
             "countryCode": "US",
@@ -922,7 +933,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     invoice_data = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names, client_user=client_user, session_obj=session_obj)
     
     if invoice_data:
-        print("Invoice data payload:", json.dumps(invoice_data, indent=4))
+      
         print(f"Final invoice data has invoiceNumber: {invoice_data.get('invoiceNumber')}")
         print(f"=== BUILD INVOICE PAYLOAD DEBUG END (SUCCESS) ===")
     else:

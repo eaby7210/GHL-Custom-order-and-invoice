@@ -17,7 +17,7 @@ class InvoiceServices:
         response = requests.post(url, headers=headers, json=data)
 
         if response.status_code == 201:
-            print(json.dumps(response.json(),indent=4))
+            # print(json.dumps(response.json(),indent=4))
             # InvoiceServices.save_contact(response.json().get("contact"))
             return response.json()
         else:
@@ -108,7 +108,7 @@ class NotaryDashServices:
         response = requests.get(url, headers=Notary_header)
         if response.status_code >= 200 and response.status_code < 300:
             print(f"✅ Client user for client {client_id} retrieved successfully.")
-            print(json.dumps(response.json(), indent=4))
+            # print(json.dumps(response.json(), indent=4))
             return response.json()
         else:
             print(f"❌ Failed to retrieve client user for client {client_id}: {response.status_code} - {response.text}")
@@ -120,7 +120,7 @@ class NotaryDashServices:
         response = requests.get(url,headers=Notary_header)
         if response.status_code >= 200 and response.status_code < 300:
             print(f"✅ Client user for client {client_id} retrieved successfully.")
-            print(json.dumps(response.json(), indent=4))
+            # print(json.dumps(response.json(), indent=4))
             return response.json()
         else:
             print(f"❌ Failed to retrieve client user for client {client_id}: {response.status_code} - {response.text}")

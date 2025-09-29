@@ -37,6 +37,7 @@ class Order(models.Model):
     # Occupancy & Access
     occupancy_vacant = models.BooleanField(default=False)
     occupancy_occupied = models.BooleanField(default=False)
+    occupancy_status = models.CharField(max_length=20, null=True, blank=True)
     access_lock_box = models.BooleanField(default=False)
     lock_box_code = models.CharField(max_length=50, blank=True, null=True)
     lock_box_location = models.TextField(blank=True, null=True)
