@@ -285,7 +285,7 @@ def stripe_webhook(request):
     
     # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
     endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
-    print(f"Webhook secret configured: {bool(endpoint_secret)}")
+    # print(f"Webhook secret configured: {bool(endpoint_secret)}")
     
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
@@ -787,23 +787,51 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
         
         services = order.a_la_carte_services.all()
         print(f"Found {services.count()} a_la_carte services")
-        
+
         for service in services:
             print(f"Processing service: {service.title}")
 
-            # loop through all items under this service
+    
             for item in service.items.all():
                 print(f"   Processing item: {item.title}")
 
+  
+                submenu_parts = []
+                for sub in item.submenu_items.all():
+                    if sub.value > 0:
+                        if sub.value == 1:
+                            submenu_parts.append(f"{sub.label}")
+                        else:
+                            submenu_parts.append(f"{sub.label} X{sub.value}")
+
+                # 🧩 Collect selected options (only where value=True)
+                selected_options = item.options.filter(value=True).values_list("label", flat=True)
+
+                # 🧩 Build full name
+                title_parts = [item.title]
+                if submenu_parts:
+                    title_parts.append(" + ".join(submenu_parts))
+
+                option_suffix = ""
+                if selected_options:
+                    option_suffix = f" ({' + '.join(selected_options)})"
+
+                product_name = f"{' + '.join(title_parts)}{option_suffix}"
+
+                print(f"   Final product name: {product_name}")
+
+
+                price_value = item.price or item.base_price or 0
+
                 items.append(build_item(
-                    name=item.title,            
-                    description=item.subtitle,   
-                    price=item.price             
+                    name=product_name,
+                    description=item.subtitle or service.title,
+                    price=price_value
                 ))
+
                 notary_product_names.append(item.item_id)
 
-                print(f"   ➕ Added item: {item.title}, price: {item.price}")
-
+                print(f"   ➕ Added item: {product_name}, price: {price_value}")
 
                 
     elif order.service_type == "bundle":
@@ -921,7 +949,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
             "emailBcc": [],
             "phoneNo": [order.contact_phone_sched] if order.contact_phone_sched else []
         },
-        "liveMode": False,
+        "liveMode": not settings.STRIPE_TEST,
         "invoiceNumberPrefix": "INV-",
         "paymentMethods": {
             "stripe": {}

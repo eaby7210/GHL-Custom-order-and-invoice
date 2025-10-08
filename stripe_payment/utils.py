@@ -53,21 +53,40 @@ def create_stripe_session(order: Order, domain):
         services: list[ALaCarteService] = order.a_la_carte_services.all()  # type: ignore
 
         for service in services:
-            items = service.items.all() # type: ignore
+            items = service.items.all()  # type: ignore
 
             for item in items:
                 # Collect selected options (only where value=True)
                 selected_options = item.options.filter(value=True).values_list("label", flat=True)
 
+                # Collect submenu details
+                submenu_parts = []
+                for sub in item.submenu_items.all():
+                    if sub.value > 0:
+                        if sub.value == 1:
+                            submenu_parts.append(f"{sub.label}")
+                        else:
+                            submenu_parts.append(f"{sub.label} X{sub.value}")
+
+                # Build combined parts
+                title_parts = [item.title]
+                if submenu_parts:
+                    title_parts.append(" + ".join(submenu_parts))
+
+                # Add option suffix if any
                 option_suffix = ""
                 if selected_options:
                     option_suffix = f" ({' + '.join(selected_options)})"
 
-                product_name = f"{item.title}{option_suffix}"
+                # Final product name
+                product_name = f"{' + '.join(title_parts)}"
+                if option_suffix:
+                    product_name = f"{product_name} {option_suffix}"
 
-                # Use item price, fallback to base_price, else 0
+                # Determine price
                 price_value = item.price or item.base_price or 0
 
+                # Construct Stripe line item
                 line_items.append({
                     "price_data": {
                         "currency": "usd",
@@ -75,10 +94,11 @@ def create_stripe_session(order: Order, domain):
                             "name": product_name,
                             "description": service.title,
                             "metadata": {
-                                "service_id": service.service_id,
-                                "item_id": item.item_id,
                                 "options": ", ".join(selected_options),
-                            }
+                                "submenu": ", ".join(
+                                    f"{sub.label} ({sub.value})" for sub in item.submenu_items.all() if sub.value > 0
+                                ),
+                            },
                         },
                         "unit_amount": int(price_value * 100),  # Stripe needs cents
                     },

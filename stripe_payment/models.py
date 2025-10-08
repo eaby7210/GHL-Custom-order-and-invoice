@@ -193,7 +193,7 @@ class ALaCarteItem(models.Model):
         if form_data:
             submenu = form_data.get("submenu", {})
             for sub_item in submenu.get("items", []):
-                ALaCarteSubMenuItem.from_api(item, sub_item)
+                ALaCarteSubMenuItem.from_api(item, sub_item,form_data)
 
         return item
 
@@ -233,7 +233,7 @@ class ALaCarteSubMenuItem(models.Model):
         return f"{self.label} (submenu of {self.item.title})"
 
     @classmethod
-    def from_api(cls, item, data):
+    def from_api(cls, item, data,form_data=None):
         return cls.objects.create(
             item=item,
             submenu_item_id=data.get("id"),
