@@ -138,8 +138,8 @@ def create_stripe_session(order: Order, domain):
         payment_method_types=["card","link"],
         mode="payment",
         line_items=line_items,
-        success_url=f"{domain}?status=success&session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{domain}?status=cancel",
+        success_url=f"{domain}?status=success&session_id={{CHECKOUT_SESSION_ID}}&client_id={order.user_id}",
+        cancel_url=f"{domain}?client_id={order.user_id}&company_id={order.company_id}&status=cancel",
         metadata={
             "order_id": str(order.id), # type: ignore
             "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else ""  ,
