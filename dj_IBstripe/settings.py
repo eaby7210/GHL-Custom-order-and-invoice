@@ -31,8 +31,12 @@ CLIENT_ID = config('CLIENT_ID')
 CLIENT_SECRET = config('CLIENT_SECRET')
 SCOPES = config('SCOPES')
 REDIRECT_URI = config('REDIRECT_URI')
-STRIPE_TEST=True
+
+
+STRIPE_TEST= not (str(config('STRIPE_LIVE')).lower() == 'true') if config('STRIPE_LIVE') else True
+
 if STRIPE_TEST:
+    
     STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY_TEST')
     STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY_TEST')
 else: 
