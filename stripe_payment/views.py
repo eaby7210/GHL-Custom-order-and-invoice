@@ -500,11 +500,11 @@ def handle_checkout_session_completed(event):
                     "operator": "eq",
                     "value": contact_email
                 },
-                {
-                    "field": "phone",
-                    "operator": "eq",
-                    "value": contact_phone
-                },
+                # {
+                #     "field": "phone",
+                #     "operator": "eq",
+                #     "value": contact_phone
+                # },
             ],
             "sort": [
                 {
@@ -520,14 +520,17 @@ def handle_checkout_session_completed(event):
             contact_data = search_response["contacts"][0]
             # print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
         else:
+            client_attr = client_user.get("attr")
+            notary_phone = (client_attr.get("phone") if client_attr.get("phone") else client_attr.get("mobile_phone") ) #type: ignore
+            ghl_phone = notary_phone if notary_phone else contact_phone 
             print("Creating new contact...")
             contact = {
-                "firstName": order_obj.contact_first_name_sched if order_obj.contact_first_name_sched else "",
-                "lastName": order_obj.contact_last_name_sched if order_obj.contact_last_name_sched else "",
+                "firstName": client_user.get("first_name") if client_user.get("first_name") else order_obj.contact_first_name_sched,
+                "lastName": client_user.get("last_name") if client_user.get("last_name") else order_obj.contact_last_name_sched,
                 # "name": contact_name,
                 "locationId": token_obj.LocationId,
                 "email": contact_email,
-                "phone": contact_phone,
+                "phone": ghl_phone,
                 "country": "US",  
                 "type": "customer"  
             }
@@ -831,7 +834,6 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
 
                 notary_product_names.append(item.item_id)
 
-                print(f"   ➕ Added item: {product_name}, price: {price_value}")
 
                 
     elif order.service_type == "bundle":
