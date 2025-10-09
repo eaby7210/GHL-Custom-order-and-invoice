@@ -150,9 +150,9 @@ def create_stripe_session(order: Order, domain):
         },
         allow_promotion_codes=True,
         # discounts=[coupon_data] if coupon_data else [],
-        payment_intent_data={
-        "capture_method": "manual",
-    }
+    #     payment_intent_data={
+    #     "capture_method": "manual",
+    # }
     )
 
     return session
