@@ -480,8 +480,10 @@ def handle_checkout_session_completed(event):
         client_user = NotaryDashServices.get_client_one_user(company_id, user_id)
         client_user = client_user.get("data", {}) if client_user else {}
         print(f"Client user retrieved: {bool(client_user)}")
-        
-        contact_phone = format_phone_number(order_obj.contact_phone_sched)
+        try:
+            contact_phone = format_phone_number(order_obj.contact_phone_sched)
+        except:
+            contact_phone = order_obj.contact_phone_sched
         contact_email = client_user.get("email")
         print(f"Contact phone: {contact_phone}, Contact email: {contact_email}")
         
@@ -905,7 +907,10 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
             "countryCode": "US",
             "postalCode": order.postal_code or ""
         }
-    contact_ph = format_phone_number(order.contact_phone_sched)
+    try:
+        contact_ph = format_phone_number(order.contact_phone_sched)
+    except:
+        contact_ph = order.contact_phone_sched
     print(f"Formatted contact phone: {contact_ph}")
     print(f"discount amount: {session_obj.total_details.amount_discount}")
     
