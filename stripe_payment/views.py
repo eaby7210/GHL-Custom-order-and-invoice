@@ -461,6 +461,7 @@ def handle_checkout_session_completed(event):
     try:
         obj = event['data']['object']
         session_id = obj["id"]
+        payment_intent_id = obj["payment_intent"]
         print(f"Session ID: {session_id}")
         
         order_obj = Order.objects.filter(stripe_session_id=session_id).first()
@@ -551,7 +552,7 @@ def handle_checkout_session_completed(event):
         print("=== ABOUT TO CALL BUILD_INVOICE_PAYLOAD ===")
         print(f"Parameters: order_obj={order_obj.id}, contact={contact_data.get('id', 'Unknown')}, location_id={token_obj.LocationId}")
         
-        invoice_payload = build_invoice_payload(
+        invoice_payload, notary_order = build_invoice_payload(
             order_obj, contact=contact_data, location_id=token_obj.LocationId,
             session_obj=obj, client_user=client_user
         )
@@ -581,6 +582,21 @@ def handle_checkout_session_completed(event):
             send_invoice(response)
             print("Recording payment...")
             record_payment(response)
+        if payment_intent_id:
+            try:
+                pi = stripe.PaymentIntent.retrieve(payment_intent_id)
+                existing_metadata = pi.metadata or {}
+                order_id = str(notary_order.get("data", {}).get("order_id"))
+                new_metadata = {
+                    **existing_metadata,
+                    "notarydash_order_id":order_id,
+                }
+                stripe.PaymentIntent.modify(payment_intent_id, metadata=new_metadata)
+                print(f"✅ Metadata updated for PaymentIntent {payment_intent_id}")
+            except Exception as e:
+                print(f"❌ Failed to update PaymentIntent metadata: {e}")
+        else:
+            print("⚠️ No payment_intent ID found in session")
     
     except Exception as e:
         print(f"ERROR in handle_checkout_session_completed: {str(e)}")
@@ -638,6 +654,14 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     company_id = order.company_id
     client_id = order.user_id
     
+    payment_intent_id = session_obj.get("payment_intent")
+    transaction_details = {
+        "transaction_id": payment_intent_id,
+    
+      
+    
+    }
+    
     html_content = render_to_string(
         "order_product_detail.html", 
         context={
@@ -649,7 +673,8 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
         "order_detail.html", 
         context={
             "invoice_data":inv_data,
-            "order":order
+            "order":order,
+            "transaction":transaction_details
             }
     )
     
@@ -743,12 +768,12 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
         inv_data["invoiceNumber"] = order_id
         print(f"Updated inv_data with invoiceNumber: {order_id}")
         print(f"=== BUILD NOTARY ORDER DEBUG END (SUCCESS) ===")
-        return inv_data
+        return inv_data, ord_response
     else:
         print(f"ERROR: Notary order creation failed")
         # print(f"Response details: {json.dumps(ord_response, indent=2) if ord_response else 'None'}")
         print(f"=== BUILD NOTARY ORDER DEBUG END (FAILURE) ===")
-        return None
+        return None, None
         
 def build_invoice_payload(order: Order , contact, location_id, session_obj,client_user):
     """
@@ -967,7 +992,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     print(f"Initial invoice data created with invoiceNumber: {invoice_data['invoiceNumber']}")
     print(f"Calling build_notary_order with product names: {notary_product_names}")
     
-    invoice_data = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names, client_user=client_user, session_obj=session_obj)
+    invoice_data, notary_order = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names, client_user=client_user, session_obj=session_obj)
     
     if invoice_data:
       
@@ -977,7 +1002,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
         print("ERROR: build_notary_order returned None")
         print(f"=== BUILD INVOICE PAYLOAD DEBUG END (FAILURE) ===")
         
-    return invoice_data
+    return invoice_data, notary_order
 
 def send_invoice(invoice_data):
     oauth_obj = OAuthToken.objects.get(LocationId=invoice_data.get("altId"))

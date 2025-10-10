@@ -140,18 +140,23 @@ def create_stripe_session(order: Order, domain):
         line_items=line_items,
         success_url=f"{domain}?status=success&session_id={{CHECKOUT_SESSION_ID}}&client_id={order.user_id}",
         cancel_url=f"{domain}?client_id={order.user_id}&company_id={order.company_id}&status=cancel",
-        metadata={
-            "order_id": str(order.id), # type: ignore
-            "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else ""  ,
-            "contact_phone": order.contact_phone_sched or "",
-            "contact_email": order.contact_email_sched or "",
-            "preferred_datetime": order.preferred_datetime.isoformat() if order.preferred_datetime else "",
-            "unit": order.unit or ""
-        },
+
         allow_promotion_codes=True,
         # discounts=[coupon_data] if coupon_data else [],
         payment_intent_data={
         "capture_method": "manual",
+        "metadata":{
+            "_id": str(order.id), # type: ignore
+            "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else ""  ,
+            "contact_phone": order.contact_phone_sched or "",
+            "contact_email": order.contact_email_sched or "",
+            "preferred_datetime": order.preferred_datetime.isoformat() if order.preferred_datetime else "",
+            "unit": order.unit or "",
+            "client_id":order.company_id,
+            "company_name":order.company_name,
+            "user_id":order.user_id,
+            
+        },
     }
     )
 
