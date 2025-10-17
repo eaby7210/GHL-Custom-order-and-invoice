@@ -176,7 +176,7 @@ class FormSubmissionAPIView(APIView):
             order.save()
 
         # Handle A La Carte services
-        total_ala_price =0
+        total_ala_price =Decimal('0.00')
         if a_la_carte_data:
             order.discount_percent = Decimal(
                 data.get("progress", {}).get("currentPercent", 0)
