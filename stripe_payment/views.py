@@ -312,7 +312,7 @@ def stripe_webhook(request):
     except SignatureVerificationError as e:
         print(f"❌ Invalid signature: {e}")
         return HttpResponse(status=400)
-    
+     
     event_id = event.get('id', None)
     event_created = event.get('created', None)
     event_type = event['type']
