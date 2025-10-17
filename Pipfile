@@ -20,6 +20,7 @@ djangorestframework-simplejwt = "*"
 redis = "*"
 python-decouple = "*"
 stripe = "*"
+django-summernote = "*"
 
 [dev-packages]
 

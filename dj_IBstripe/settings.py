@@ -79,9 +79,11 @@ INSTALLED_APPS = [
     'allauth.socialaccount',
     'django_filters',
     'corsheaders',
+    'django_summernote',
     
     'core',
-    'stripe_payment'
+    'stripe_payment',
+    'order_page',
 ]
 
 MIDDLEWARE = [
@@ -218,6 +220,42 @@ LOGGING = {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
+        },
+    },
+}
+
+SUMMERNOTE_CONFIG = {
+    # Disable all file/image uploads
+    'disable_upload': True,
+
+    # Optional: make it lightweight
+    'summernote': {
+        'width': '750px',
+        'height': '600px',
+        'toolbar': [
+            ['style', ['style']],
+             ['fontsize', ['fontsize']],
+            ['para', ['ul', 'ol', 'paragraph',]],
+            ['format', ['p', 'blockquote', ]],
+            ['misc', ['undo', 'redo']],
+             ['view', ['codeview']],
+             ['styltags',['styleTags']]
+             
+        ],
+              'styleTags': [
+            'p', 'blockquote',
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+        ],
+    },
+    # 'iframe': False,
+
+    # Optional: clean up HTML automatically
+    'cleaner': {
+        'allow_tags': {
+            'p', 'br', 'blockquote',
+            'ul', 'ol', 'li',
+            'b', 'i', 'u', 'em', 'strong',
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
         },
     },
 }
