@@ -18,93 +18,80 @@ def create_stripe_session(order: Order, domain):
     """
     line_items = []
 
-    if order.service_type == "bundle":
-        # Get all bundles for this order
-        bundles = order.bundles.all()
-        
-        if bundles.exists():
-            for bundle in bundles:
-                line_items.append({
-                    "price_data": {
-                        "currency": "usd",
-                        "product_data": {
-                            "name": bundle.name,
-                            "description": f"Bundle - {bundle.description}" if bundle.description else f"Bundle - {bundle.name}",
-                        },
-                        "unit_amount": int(float(bundle.price) * 100),
-                    },
-                    "quantity": 1,
-                })
-        else:
-            # Fallback if no bundles found
+
+
+    bundles = order.bundles.all()
+    if bundles.exists():
+        for bundle in bundles:
             line_items.append({
                 "price_data": {
                     "currency": "usd",
                     "product_data": {
-                        "name": "Bundled Service",
-                        "description": "Bundle service",
+                        "name": bundle.name,
+                        "description": f"Bundle - {bundle.description}" if bundle.description else f"Bundle - {bundle.name}",
                     },
-                    "unit_amount": int((order.total_price if order and order.total_price else 0) * 100),
+                    "unit_amount": int(float(bundle.price or 0) * 100),
                 },
                 "quantity": 1,
             })
 
-    elif order.service_type == "a_la_carte":
-        services: list[ALaCarteService] = order.a_la_carte_services.all()  # type: ignore
 
-        for service in services:
-            items = service.items.all()  # type: ignore
+    services = order.a_la_carte_services.all()
+    for service in services:
+        for item in service.items.all():
+            # Gather options
+            selected_options = item.options.filter(value=True).values_list("label", flat=True)
 
-            for item in items:
-                # Collect selected options (only where value=True)
-                selected_options = item.options.filter(value=True).values_list("label", flat=True)
+            # Gather submenu info
+            submenu_parts = []
+            for sub in item.submenu_items.all():
+                if sub.value > 0:
+                    label = f"{sub.label} X{sub.value}" if sub.value > 1 else sub.label
+                    submenu_parts.append(label)
 
-                # Collect submenu details
-                submenu_parts = []
-                for sub in item.submenu_items.all():
-                    if sub.value > 0:
-                        if sub.value == 1:
-                            submenu_parts.append(f"{sub.label}")
-                        else:
-                            submenu_parts.append(f"{sub.label} X{sub.value}")
+            # Build product name
+            product_name = item.title
+            if submenu_parts:
+                product_name += " + " + " + ".join(submenu_parts)
+            if selected_options:
+                product_name += f" ({' + '.join(selected_options)})"
 
-                # Build combined parts
-                title_parts = [item.title]
-                if submenu_parts:
-                    title_parts.append(" + ".join(submenu_parts))
+            # Price logic
+            price_value = item.price or item.base_price or 0
 
-                # Add option suffix if any
-                option_suffix = ""
-                if selected_options:
-                    option_suffix = f" ({' + '.join(selected_options)})"
-
-                # Final product name
-                product_name = f"{' + '.join(title_parts)}"
-                if option_suffix:
-                    product_name = f"{product_name} {option_suffix}"
-
-                # Determine price
-                price_value = item.price or item.base_price or 0
-
-                # Construct Stripe line item
-                line_items.append({
-                    "price_data": {
-                        "currency": "usd",
-                        "product_data": {
-                            "name": product_name,
-                            "description": service.title,
-                            "metadata": {
-                                "options": ", ".join(selected_options),
-                                "submenu": ", ".join(
-                                    f"{sub.label} ({sub.value})" for sub in item.submenu_items.all() if sub.value > 0
-                                ),
-                            },
+            line_items.append({
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": product_name,
+                        "description": service.title,
+                        "metadata": {
+                            "service_id": service.service_id,
+                            "item_id": item.item_id,
+                            "options": ", ".join(selected_options),
+                            "submenu": ", ".join(
+                                f"{sub.label} ({sub.value})" for sub in item.submenu_items.all() if sub.value > 0
+                            ),
                         },
-                        "unit_amount": int(price_value * 100),  # Stripe needs cents
                     },
-                    "quantity": 1,
-                })
+                    "unit_amount": int(float(price_value) * 100),
+                },
+                "quantity": 1,
+            })
 
+
+    if not line_items:
+        line_items.append({
+            "price_data": {
+                "currency": "usd",
+                "product_data": {
+                    "name": "Custom Order",
+                    "description": f"{order.service_type.title()} Service",
+                },
+                "unit_amount": int(float(order.total_price or 0) * 100),
+            },
+            "quantity": 1,
+        })
     total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
 
     # --- Add Order Protection  ---

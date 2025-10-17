@@ -155,6 +155,7 @@ class FormSubmissionAPIView(APIView):
   
         #Save bundles
         bundles_data = data.get("bundles", [])
+        a_la_carte_data = data.get("a_la_carteOrder", [])
         total_bundle_price = Decimal('0.00')
         
         for b in bundles_data:
@@ -175,12 +176,27 @@ class FormSubmissionAPIView(APIView):
             order.save()
 
         # Handle A La Carte services
-        if service_type == "a_la_carte":
-           progress = data.get("progress", {})
-           
-           order.discount_percent = Decimal(progress.get("currentPercent", 0))
-           ALaCarteService.from_api(order,data)
-               
+        if a_la_carte_data:
+            order.discount_percent = Decimal(
+                data.get("progress", {}).get("currentPercent", 0)
+            )
+            ALaCarteService.from_api(order, data)
+
+            total_ala_price =0
+            for svc_id, svc_total in (data.get("serviceTotals") or {}).items():
+                total_ala_price += Decimal(svc_total.get("subtotal", 0))
+
+        if bundles_data and a_la_carte_data:
+            order.service_type = "mixed"
+        elif bundles_data:
+            order.service_type = "bundled"
+        elif a_la_carte_data:
+            order.service_type = "a_la_carte"
+
+
+        order.total_price = total_bundle_price + total_ala_price
+        order.save()
+
         frontend_domain = request.headers.get("Origin") 
         print(f"Frontend domain: {frontend_domain}")
 
@@ -810,107 +826,84 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     notary_product_names = []
     session_total_price = session_obj.amount_total/100 if session_obj else 0
     total_bundle_price = 0
+    total_ala_price = 0
 
 
-    if order.service_type == "a_la_carte":
-        print(f"Processing A LA CARTE service type")
-        
-        services = order.a_la_carte_services.all()
-        print(f"Found {services.count()} a_la_carte services")
+    print(f"Building invoice items for order {order.id} (type: {order.service_type})")
+
+    # 🟩 1. Always include Bundles if any
+    bundles = order.bundles.all()
+    if bundles.exists():
+        print(f"Found {bundles.count()} bundles for order")
+
+        for bundle in bundles:
+            print(f"Processing bundle: {bundle.name} (${bundle.price})")
+            total_bundle_price += float(bundle.price or 0)
+
+            items.append(build_item(
+                name=bundle.name,
+                description=bundle.description,
+                price=bundle.price
+            ))
+            notary_product_names.append(bundle.name)
+
+    # 🟦 2. Include A La Carte services if any
+    services = order.a_la_carte_services.all()
+    if services.exists():
+        print(f"Found {services.count()} A La Carte services")
 
         for service in services:
-            print(f"Processing service: {service.title}")
-
-    
             for item in service.items.all():
-                print(f"   Processing item: {item.title}")
-
-  
                 submenu_parts = []
                 for sub in item.submenu_items.all():
                     if sub.value > 0:
-                        if sub.value == 1:
-                            submenu_parts.append(f"{sub.label}")
-                        else:
-                            submenu_parts.append(f"{sub.label} X{sub.value}")
+                        label = f"{sub.label} X{sub.value}" if sub.value > 1 else sub.label
+                        submenu_parts.append(label)
 
-                # 🧩 Collect selected options (only where value=True)
+                # Selected options
                 selected_options = item.options.filter(value=True).values_list("label", flat=True)
 
-                # 🧩 Build full name
+                # Build product name
                 title_parts = [item.title]
                 if submenu_parts:
                     title_parts.append(" + ".join(submenu_parts))
 
-                option_suffix = ""
-                if selected_options:
-                    option_suffix = f" ({' + '.join(selected_options)})"
-
+                option_suffix = f" ({' + '.join(selected_options)})" if selected_options else ""
                 product_name = f"{' + '.join(title_parts)}{option_suffix}"
 
-                print(f"   Final product name: {product_name}")
-
-
                 price_value = item.price or item.base_price or 0
+                total_ala_price += float(price_value)
 
                 items.append(build_item(
                     name=product_name,
                     description=item.subtitle or service.title,
                     price=price_value
                 ))
-
                 notary_product_names.append(item.item_id)
 
+    # 🟥 3. Handle "mixed" automatically
+    if bundles.exists() and services.exists():
+        order.service_type = "mixed"
+        print(f"Order {order.id} contains both bundles and A La Carte — set as mixed")
 
-                
-    elif order.service_type == "bundle":
-        print(f"Processing BUNDLED service type")
-        # Get all bundles for this order
-        bundles = order.bundles.all()
-        print(f"Found {bundles.count()} bundles for order")
-        
-        if bundles.exists():
-            # Combine all bundle names and descriptions
-            bundle_names = []
-            bundle_descriptions = []
-            
-            for bundle in bundles:
-                print(f"Processing bundle: {bundle.name}, price: {bundle.price}, description: {bundle.description}")
-                bundle_names.append(bundle.name)
-                if bundle.description:
-                    bundle_descriptions.append(bundle.description)
-                total_bundle_price += float(bundle.price)
-                items.append(build_item(
-                    name=bundle.name,
-                    description=bundle.description,
-                    price=bundle.price
-                ))
-                notary_product_names.append(bundle.name)
-            
-            print(f"Total bundle price calculated: {total_bundle_price}")
-            
-            # Create combined name and description
-            combined_name = " + ".join(bundle_names)
-            combined_description = " | ".join(bundle_descriptions) if bundle_descriptions else ""
-            
-            print(f"Combined name: {combined_name}")
-            print(f"Combined description: {combined_description}")
-            
-            notary_product_names.append(combined_name)
-            
-            # Create single combined item for all bundles
-            
-            print(f"Added combined bundle item with total price: {total_bundle_price}")
-        else:
-            # Fallback if no bundles found (shouldn't happen but safety check)
-            print("WARNING: No bundles found for bundled order - using fallback")
-            notary_product_names.append("Bundled Service")
-            items.append(build_item(
-                name="Bundled Service",
-                description="No bundle details available",
-                price=order.total_price or 0
-            ))
-    
+    elif bundles.exists():
+        order.service_type = "bundled"
+    elif services.exists():
+        order.service_type = "a_la_carte"
+
+    # 🧮 4. Fallback / combined summary if no line items
+    if not items:
+        print("WARNING: No bundle or A La Carte items found — adding fallback line")
+        items.append(build_item(
+            name="Custom Order",
+            description=f"{order.service_type.title()} Service",
+            price=order.total_price or session_total_price or 0
+        ))
+        notary_product_names.append("Custom Order")
+
+    # 🧾 5. Compute combined totals
+    combined_total = total_bundle_price + total_ala_price
+    print(f"Bundle Total: {total_bundle_price}, ALC Total: {total_ala_price}, Combined: {combined_total}") 
     if order.order_protection ==True:
         notary_product_names.append("with Protection")
         items.append(build_item(
@@ -943,7 +936,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     invoice_data = {
         "altId": location_id,
         "altType": "location",
-        "name": f"{order.company_name} - {order.get_service_type_display()} ",
+        "name": f"{order.company_name} - {order.get_service_type_display() if order.service_type !="mixed" else "Bundle+A La Carte"} ",
         "businessDetails": {
      
             "name": order.company_name or "",
@@ -961,7 +954,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
             # "validOnProductIds": "[ '6579751d56f60276e5bd4154' ]"
         },
         "termsNotes": "<p>This is a default terms.</p>",
-        "title": f"Invoice -{order.get_service_type_display()}",
+        "title": f"Invoice -{order.get_service_type_display() if order.service_type !="mixed" else "Bundle+A La Carte"}",
         "contactDetails": {
             "id": contact.get("id"),
             "name": order.contact_first_name_sched + " " + order.contact_last_name_sched if order.contact_first_name_sched and order.contact_last_name_sched else "",

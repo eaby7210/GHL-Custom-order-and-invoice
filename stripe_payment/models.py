@@ -12,6 +12,7 @@ class Order(models.Model):
     SERVICE_TYPE_CHOICES = [
         ("a_la_carte", "A La Carte"),
         ("bundled", "Bundled"),
+         ("mixed", "Mixed"),
     ]
     PHONE_TYPE_CHOICES = [
         ("mobile", "Mobile"),
