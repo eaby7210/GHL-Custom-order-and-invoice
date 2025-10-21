@@ -23,3 +23,6 @@ urlpatterns = [
     path("summernote/", include("django_summernote.urls")), 
     path("order_page/", include("order_page.urls"))
 ]
+
+admin.site.site_header = "IB Order Page Admin"
+admin.site.index_title = "Investorbootz Admin Panel"
