@@ -906,7 +906,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     combined_total = total_bundle_price + total_ala_price
     print(f"Bundle Total: {total_bundle_price}, ALC Total: {total_ala_price}, Combined: {combined_total}") 
     if order.order_protection ==True:
-        notary_product_names.append("with Protection")
+        notary_product_names.append(" +Prt")
         items.append(build_item(
                     name="Order Protection",
                     description="Optional Order Protection",
