@@ -172,3 +172,46 @@ class NotaryDashServices:
         else:
             print(f"❌ Failed to create client: {response.status_code} - {response.text}")
             return None
+
+    @staticmethod
+    def create_client_user(client_id: str, user_data: dict):
+        """
+        Create a new user under a specific client.
+        
+        Args:
+            client_id (str): The NotaryDash client ID.
+            user_data (dict): Example:
+                {
+                    "user": {
+                        "password": "voluptas",
+                        "password_confirmation": "ipsum",
+                        "first_name": "minus",
+                        "last_name": "et",
+                        "email": "provident",
+                        "attr": {
+                            "phone": "est",
+                            "mobile_phone": "ex"
+                        }
+                    },
+                    "email_credentials": False,
+                    "teams": [{"id": 11}]
+                }
+
+        Returns:
+            dict | None
+        """
+        url = f"{BASE_URL}/api/v2/clients/{client_id}/users"
+        headers = {
+            **Notary_header,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        response = requests.post(url, headers=headers, json=user_data)
+
+        if 200 <= response.status_code < 300:
+            print("✅ Client user created successfully.")
+            return response.json()
+        else:
+            print(f"❌ Failed to create client user: {response.status_code} - {response.text}")
+            return None

@@ -66,6 +66,7 @@ class FormSubmissionAPIView(APIView):
             else:
                 owner_id = response.get("data",{}).get("owner_id")
                 company_name = response.get("data",{}).get("company_name")
+                client_team_id = response.get("data",{}).get("teams",[])[0].get("id")
                 print(f"Company name {company_name}")
                 if not owner_id:
                     print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
@@ -144,6 +145,7 @@ class FormSubmissionAPIView(APIView):
             company_id = company_id,
             user_id= user_id,
             owner_id=owner_id,
+            client_team_id = client_team_id,
             
             company_name=company_name,
             # For bundled services, total_price will be calculated from bundle prices
@@ -670,6 +672,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
   
     company_id = order.company_id
     client_id = order.user_id
+    client_team_id = order.client_team_id
     
     payment_intent_id = session_obj.get("payment_intent")
     transaction_details = {
@@ -729,6 +732,8 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     notary_order = {
         "client_id": company_id,
         "client_contact_id": client_id,
+        "client_team_id": client_team_id,
+        "owner_id":client_id,
         "location": {
             "when": "at" if order.preferred_datetime else "TBD",
             
