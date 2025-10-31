@@ -60,7 +60,7 @@ class NotaryCreationView(APIView):
         print(f'Recieved payload {json.dumps(data, indent=4)}')
         email = data.get("email")
         time_threshold = timezone.now() - timedelta(seconds=30  )
-        print(f"time treshold : {timezone.now() } - {timedelta(seconds=30  )} - {time_threshold}}")
+        print(f"time treshold : {timezone.now() } - {timedelta(seconds=30  )} - {time_threshold}")
         if email:
             print(f"Got email {email}")
             email_answers = (
