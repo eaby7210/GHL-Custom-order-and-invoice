@@ -59,7 +59,8 @@ class NotaryCreationView(APIView):
         data = request.data
         print(f'Recieved payload {json.dumps(data, indent=4)}')
         email = data.get("email")
-        time_threshold = timezone.now() - timedelta(seconds=20  )
+        time_threshold = timezone.now() - timedelta(seconds=30  )
+        print(f"time treshold : {timezone.now() } - {timedelta(seconds=30  )} - {time_threshold}}")
         if email:
             print(f"Got email {email}")
             email_answers = (
@@ -67,8 +68,7 @@ class NotaryCreationView(APIView):
                 .select_related('response')  # optimize DB join
                 .filter(
                     answer_type='email',
-                    value_text__isnull=False,
-                    value_text__gt='',  # exclude empty strings
+                    value_text=email,  
                     response__landed_at__gte=time_threshold
                 )
                 .order_by('-response__landed_at')
