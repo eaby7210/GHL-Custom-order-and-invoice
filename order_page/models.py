@@ -84,6 +84,33 @@ class TypeformResponse(models.Model):
             models.Index(fields=["submitted_at"]),
         ]
 
+    def get_answer_by_title(self, title: str):
+        """
+        Given a field title (case-insensitive), return its answer value.
+        Returns None if no matching field or answer exists.
+        """
+        try:
+            # Case-insensitive lookup on field title
+            answer = (
+                self.answers.select_related("field").filter(field__title__iexact=title).first())#type:ignore
+            if not answer:
+                return None
+
+            # Return the best available scalar value
+            if answer.value_text:
+                return answer.value_text
+            if answer.value_number is not None:
+                return answer.value_number
+            if answer.value_bool is not None:
+                return answer.value_bool
+            if answer.value_json:
+                return answer.value_json
+            return None
+        except Exception as e:
+            # Optional: handle edge cases safely
+            print(f" get_answer_by_title({title}) failed:", e)
+            return None
+
     def __str__(self):
         return f"Response {self.token} ({self.form.form_id})"
 
