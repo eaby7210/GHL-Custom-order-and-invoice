@@ -123,14 +123,14 @@ class ServiceFormAdmin(SortableAdminMixin, admin.ModelAdmin):
 class IndividualServiceAdmin(SummernoteModelAdmin, SortableAdminMixin):
     list_display = ("title", "order_protection", "order_protection_type", "sort_order")
     list_filter = ("order_protection", "order_protection_type")
-    search_fields = ("title", "slug", "subtitle", "header")
+    search_fields = ("title", "service_id", "subtitle", "header")
     summernote_fields = ("subheader_html",)
     ordering = ("sort_order",)
     inlines = [DisclosureInline]
     fieldsets = (
         ("Service Info", {
             "fields": (
-                "slug", "title", "subtitle", "header", "subheader_html"
+                "service_id", "title", "subtitle", "header", "subheader_html"
             )
         }),
         ("Order Protection", {
