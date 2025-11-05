@@ -415,7 +415,7 @@ class IndividualService(TimeStampedModel):
         PERCENT = "percent", "Percent"
         FIXED = "fixed", "Fixed"
 
-    slug = models.SlugField(max_length=100, unique=True)
+    service_id = models.CharField(max_length=100, unique=False)
     title = models.CharField(max_length=255)
     subtitle = models.CharField(max_length=512, blank=True, null=True)
     header = models.CharField(max_length=255, blank=True, null=True)
