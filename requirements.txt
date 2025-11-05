@@ -1,7 +1,7 @@
 amqp==5.3.1
 asgiref==3.10.0
 billiard==4.2.2
-bleach==6.2.0
+bleach==6.3.0
 celery==5.5.3
 certifi==2025.10.5
 cffi==2.0.0
@@ -14,7 +14,8 @@ cron_descriptor==2.0.6
 cryptography==46.0.3
 dj-rest-auth==7.0.1
 Django==5.2.7
-django-allauth==65.12.1
+django-admin-sortable2==2.2.8
+django-allauth==65.13.0
 django-celery-beat==2.8.1
 django-cors-headers==4.9.0
 django-filter==25.2
@@ -33,12 +34,12 @@ PyJWT==2.10.1
 python-crontab==3.3.0
 python-dateutil==2.9.0.post0
 python-decouple==3.8
-redis==6.4.0
+redis==7.0.1
 requests==2.32.5
 setuptools==80.9.0
 six==1.17.0
 sqlparse==0.5.3
-stripe==13.0.1
+stripe==13.1.1
 typing_extensions==4.15.0
 tzdata==2025.2
 urllib3==2.5.0
