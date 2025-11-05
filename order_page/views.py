@@ -1,8 +1,14 @@
 # views.py
+from django.shortcuts import get_object_or_404
+
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import TermsOfConditions, TypeformResponse, TypeformParser, TypeformAnswer
-from .serializers import TermsOfConditionsSerializer
+from .models import (
+    TermsOfConditions, TypeformResponse, TypeformParser, TypeformAnswer,
+    ServiceVariance, NotaryClientCompany
+    )
+
+from .serializers import TermsOfConditionsSerializer, ServiceVarianceSerializer
 from rest_framework import status
 import json
 from django.utils import timezone
@@ -125,3 +131,57 @@ class NotaryCreationView(APIView):
             
         return Response(data={"message":"Error"},status=status.HTTP_400_BAD_REQUEST)
         # return Response(data={"message":"Recieved paylaod"},status=status.HTTP_204_NO_CONTENT)
+
+
+
+
+
+
+class ServiceLookupView(APIView):
+    """
+    Returns the detailed service + bundle structure for a given company.
+    If company_id = 'default', returns the active default variance.
+    Otherwise:
+      - Attempts to find a variance assigned to the company.
+      - Falls back to default if none exists.
+    """
+
+    def get(self, request, company_id: str):
+        try:
+            # Case 1: If explicitly requesting the default
+            if company_id.lower() == "default":
+                variance = ServiceVariance.get_default()
+                if not variance:
+                    return Response(
+                        {"detail": "No default active service variance found."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+            else:
+                # Case 2: Try to find company-specific variance
+                client = get_object_or_404(NotaryClientCompany, id=company_id)
+
+                variance = (
+                    ServiceVariance.objects.filter(clients=client, is_active=True)
+                    .prefetch_related("bundle_group__bundles", "service_category__services")
+                    .first()
+                )
+
+                # Fallback to default
+                if not variance:
+                    variance = ServiceVariance.get_default()
+                    if not variance:
+                        return Response(
+                            {"detail": "No active variance found for client or default."},
+                            status=status.HTTP_404_NOT_FOUND,
+                        )
+
+            # Serialize result
+            serializer = ServiceVarianceSerializer(variance)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+

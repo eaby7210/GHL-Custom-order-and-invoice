@@ -43,7 +43,6 @@ class OAuthServices:
     @staticmethod
     def get_valid_access_token_obj(location_id=None):
        
-        from django.conf import settings
         if location_id:
             token_obj = OAuthToken.objects.get(LocationId=location_id)  # Assuming one OAuth record, change if one per user
         else:
@@ -61,7 +60,7 @@ class OAuthServices:
     def get_fresh_token(auth_code):
         '''Exchange authorization code for a fresh access token'''
         print("reached hereee")
-        from django.conf import settings
+
         
         headers = {
         "Content-Type": "application/x-www-form-urlencoded"

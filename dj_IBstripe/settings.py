@@ -80,7 +80,7 @@ INSTALLED_APPS = [
     'django_filters',
     'corsheaders',
     'django_summernote',
-    
+    'adminsortable2',
     'core',
     'stripe_payment',
     'order_page',
@@ -120,13 +120,27 @@ WSGI_APPLICATION = 'dj_IBstripe.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+if config('DB') == 'psql':
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+    DATABASES = {
+            'default': {
+                'ENGINE': config('DB_ENGINE'),
+                'NAME': config('DB_NAME'),
+                'HOST': config('DB_HOST'),
+                'USER': config('DB_USER'),
+                'PASSWORD': config('DB_PASSWORD'),
+                'port': config('DB_PORT')
+            }
+        } 
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
     }
-}
+
+
 
 
 # Password validation
@@ -234,6 +248,7 @@ SUMMERNOTE_CONFIG = {
         'height': '600px',
         'toolbar': [
             ['style', ['style']],
+            ['font', ['bold', 'italic', 'underline', 'strikethrough', 'clear']], 
              ['fontsize', ['fontsize']],
             ['para', ['ul', 'ol', 'paragraph',]],
             ['format', ['p', 'blockquote', ]],

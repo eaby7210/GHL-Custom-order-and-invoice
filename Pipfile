@@ -21,6 +21,7 @@ redis = "*"
 python-decouple = "*"
 stripe = "*"
 django-summernote = "*"
+django-admin-sortable2 = "*"
 
 [dev-packages]
 
