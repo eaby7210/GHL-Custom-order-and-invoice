@@ -411,6 +411,10 @@ class ServiceCategory(TimeStampedModel):
 # Individual Service
 # -------------------------------------------------------------------
 class IndividualService(TimeStampedModel):
+    class OrderProtectionType(models.TextChoices):
+        PERCENT = "percent", "Percent"
+        FIXED = "fixed", "Fixed"
+
     slug = models.SlugField(max_length=100, unique=True)
     title = models.CharField(max_length=255)
     subtitle = models.CharField(max_length=512, blank=True, null=True)
@@ -419,8 +423,20 @@ class IndividualService(TimeStampedModel):
 
     order_protection = models.BooleanField(default=False)
     order_protection_disabled = models.BooleanField(default=False)
-    order_protection_type = models.CharField(max_length=50, blank=True, null=True)
-    order_protection_value = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    order_protection_type = models.CharField(
+        max_length=50,
+        choices=OrderProtectionType.choices,
+        blank=True,
+        null=True,
+        help_text="Type of order protection applied (percent or fixed)."
+    )
+    order_protection_value = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="The numeric value for order protection."
+    )
 
     sort_order = models.PositiveIntegerField(default=0)
 
