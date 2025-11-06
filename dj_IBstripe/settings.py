@@ -120,7 +120,7 @@ WSGI_APPLICATION = 'dj_IBstripe.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-if config('DB') == 'psql':
+if config('DB', default="") == 'psql':
 
     DATABASES = {
             'default': {

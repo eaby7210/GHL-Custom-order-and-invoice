@@ -184,4 +184,3 @@ class ServiceLookupView(APIView):
             return Response(
                 {"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-

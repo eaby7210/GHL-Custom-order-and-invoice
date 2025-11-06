@@ -438,6 +438,15 @@ class IndividualService(TimeStampedModel):
         help_text="The numeric value for order protection."
     )
 
+    form_ref = models.OneToOneField(
+        "ServiceForm",
+        related_name="linked_service",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        help_text="Link to the service form directly (reverse OneToOne)."
+    )
+
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -446,25 +455,45 @@ class IndividualService(TimeStampedModel):
     def __str__(self):
         return self.title
 
+
 # -------------------------------------------------------------------
 # Service Form
 # -------------------------------------------------------------------
 class ServiceForm(TimeStampedModel):
-    service = models.OneToOneField(
-        IndividualService, related_name="form", on_delete=models.CASCADE
-    )
+ 
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
+    items = models.ManyToManyField(
+        "FormItem",
+        related_name="forms",
+        blank=True,
+        help_text="Select one or more form items for this form."
+    )
+    submenus = models.ManyToManyField(
+        "Submenu",
+        related_name="forms",
+        blank=True,
+        help_text="Attach one or more submenus to this form."
+    )
+    modal_options = models.ManyToManyField(
+        "ModalOption",
+        related_name="forms",
+        blank=True,
+        help_text="Attach one or more modal options (e.g., 'Lockbox Code', 'Signer Name')."
+    )
 
     def __str__(self):
-        return f"{self.title} ({self.service.title})"
+        return f"{self.title} "
 
 
 # -------------------------------------------------------------------
 #  Form Item
 # -------------------------------------------------------------------
 class FormItem(TimeStampedModel):
-    form = models.ForeignKey(ServiceForm, related_name="items", on_delete=models.CASCADE)
+    """
+    Represents an individual configurable item that can appear
+    in one or more ServiceForms.
+    """
     identifier = models.CharField(max_length=100)
     title = models.CharField(max_length=255)
     subtitle = models.TextField(blank=True, null=True)
@@ -472,35 +501,76 @@ class FormItem(TimeStampedModel):
     base_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     protection_invalid = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
+    option_group = models.OneToOneField(
+        "OptionGroup",
+        related_name="form_item",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        help_text="The group of selectable options linked to this form item."
+    )
 
     class Meta:
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        return f"{self.title} ({self.form.service.title})"
+        return f"{self.title}"
 
 
 # -------------------------------------------------------------------
 #  Option Group
 # -------------------------------------------------------------------
 class OptionGroup(TimeStampedModel):
-    form_item = models.ForeignKey(FormItem, related_name="option_groups", on_delete=models.CASCADE)
-    type = models.CharField(max_length=50, default="checkbox")  # e.g., checkbox, radio
+    """
+    Defines a set of selectable options (checkbox, radio, etc.)
+    linked to a single FormItem.
+    Now supports many-to-many relationship with OptionItems.
+    """
+    type = models.CharField(
+        max_length=50,
+        choices=[
+            ("checkbox", "Checkbox"),
+            # ("radio", "Radio"),
+            # ("dropdown", "Dropdown"),
+        ],
+        default="checkbox",
+        help_text="Type of option selection control."
+    )
     minimum_required = models.PositiveIntegerField(default=0)
     sort_order = models.PositiveIntegerField(default=0)
+
+    # 🔹 Many-to-many relationship to OptionItem
+    items = models.ManyToManyField(
+        "OptionItem",
+        related_name="groups",
+        blank=True,
+        help_text="Select one or more options that belong to this group."
+    )
 
     class Meta:
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        return f"{self.type.title()} options for {self.form_item.title}"
+        """
+        Display type and related FormItem identifier or title if linked,
+        otherwi
+        se indicate unlinked status.
+        """
+        if hasattr(self, "form_item") and self.form_item:  # type: ignore
+            identifier = getattr(self.form_item, "identifier", None) or self.form_item.title  # type: ignore
+            return f"{identifier} → {self.type.title()} Group"
+        return f"Unlinked {self.type.title()} Group"
+
 
 
 # -------------------------------------------------------------------
 # Option Item
 # -------------------------------------------------------------------
 class OptionItem(TimeStampedModel):
-    group = models.ForeignKey(OptionGroup, related_name="items", on_delete=models.CASCADE)
+    """
+    Represents a selectable option that can appear in one or more OptionGroups.
+    Example: Interior, Exterior, Ship Docs, etc.
+    """
     identifier = models.CharField(max_length=100)
     label = models.CharField(max_length=255)
     value = models.BooleanField(default=False)
@@ -512,27 +582,41 @@ class OptionItem(TimeStampedModel):
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        return f"{self.label} ({self.group.form_item.title})"
+        """
+        Show the label and a list of group types it's linked to, if any.
+        """
+        linked_groups = list(self.groups.values_list("type", flat=True)) if hasattr(self, "groups") else [] #type:ignore
+        if linked_groups:
+            return f"{self.label} ({', '.join([g.title() for g in linked_groups])})"
+        return f"{self.label} (Unlinked)"
 
 
 # -------------------------------------------------------------------
 # Submenu (e.g., page range, witness counter)
 # -------------------------------------------------------------------
 class Submenu(TimeStampedModel):
-    form = models.ForeignKey(ServiceForm, related_name="submenus", on_delete=models.CASCADE)
+    
     type = models.CharField(max_length=50, default="mixed")
     label = models.CharField(max_length=255, blank=True, null=True)
     sort_order = models.PositiveIntegerField(default=0)
+    items = models.ManyToManyField(
+        "SubmenuItem",
+        related_name="submenus",
+        blank=True,
+        help_text="Select one or more items to include in this submenu."
+    )
 
     class Meta:
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        return f"Submenu ({self.form.service.title})"
+        label_display = self.label or "Untitled"
+        return f"{label_display} ({self.type.title()}) Submenu" #type:ignore
+    
 
 
 class SubmenuItem(TimeStampedModel):
-    submenu = models.ForeignKey(Submenu, related_name="items", on_delete=models.CASCADE)
+    
     identifier = models.CharField(max_length=100)
     label = models.CharField(max_length=255)
     type = models.CharField(max_length=50, blank=True, null=True)  # radio, counter, etc.
@@ -540,13 +624,28 @@ class SubmenuItem(TimeStampedModel):
     min_value = models.IntegerField(blank=True, null=True)
     max_value = models.IntegerField(blank=True, null=True)
     sort_order = models.PositiveIntegerField(default=0)
+    price_changes = models.ManyToManyField(
+        "SubmenuPriceChange",
+        related_name="submenu_items",
+        blank=True,
+        help_text="Optional price modifications linked to this submenu item."
+    )
 
     class Meta:
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        return self.label
-
+        """
+        Display label and linked submenus or price modifiers.
+        """
+        linked_menus = list(self.submenus.values_list("label", flat=True)) if hasattr(self, "submenus") else []  # type: ignore
+        linked_prices = list(self.price_changes.values_list("key", flat=True)) if hasattr(self, "price_changes") else []
+        label_info = self.label
+        if linked_menus:
+            label_info += f" (Used in: {', '.join([m or 'Unnamed' for m in linked_menus])})"
+        if linked_prices:
+            label_info += f" [Pricing: {', '.join(linked_prices)}]"
+        return label_info
 
 # -------------------------------------------------------------------
 #SubmenuPriceChange (NEW)
@@ -555,13 +654,15 @@ class SubmenuPriceChange(TimeStampedModel):
     """
     Represents pricing modifiers for specific submenus (like 'pages11_39', 'witness', etc.)
     """
-    form_item = models.ForeignKey(FormItem, related_name="submenu_price_changes", on_delete=models.CASCADE)
+
     key = models.CharField(max_length=100, help_text="Submenu key, e.g. 'pages11_39'")
     change_type = models.CharField(max_length=20, choices=[
         ("add", "Add"),
         ("multiple", "Multiple")
     ])
-    value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    value = models.DecimalField(
+        max_digits=10,
+        decimal_places=2, null=True, blank=True)
 
     def __str__(self):
         return f"{self.key} ({self.change_type}: {self.value})"
@@ -571,11 +672,21 @@ class SubmenuPriceChange(TimeStampedModel):
 # Modal Option (custom inline forms like “Lockbox code”)
 # -------------------------------------------------------------------
 class ModalOption(TimeStampedModel):
-    form = models.ForeignKey(ServiceForm, related_name="modal_options", on_delete=models.CASCADE)
+
     each_item = models.BooleanField(default=False)
     label = models.CharField(max_length=255)
     field_name = models.CharField(max_length=100)
-    field_type = models.CharField(max_length=50, default="text")  # text, email, number, etc.
+    field_type = models.CharField(
+        max_length=50,
+        choices=[
+            ("text", "Text"),
+            ("email", "Email"),
+            ("number", "Number"),
+            ("date", "Date"),
+        ],
+        default="text",
+        help_text="Type of input field rendered in frontend."
+    ) # text, email, number, etc.
     required = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
 
@@ -583,7 +694,7 @@ class ModalOption(TimeStampedModel):
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        return f"{self.label} ({self.form.service.title})"
+        return f"{self.label} ({self.field_type})"
 
 
 # -------------------------------------------------------------------
