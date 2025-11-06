@@ -346,12 +346,88 @@ class BundleGroup(TimeStampedModel):
         return self.header
 
 
+# -------------------------------------------------------------------
+#  Bundle Option Item
+# -------------------------------------------------------------------
+class BundleOptionItem(TimeStampedModel):
+    """
+    Represents a selectable option available under bundle option groups.
+    Example: add-ons like 'Expedited Delivery' or 'Premium Support'.
+    """
+
+    identifier = models.CharField(max_length=100)
+    label = models.CharField(max_length=255)
+    value = models.BooleanField(default=False)
+    disabled = models.BooleanField(default=False)
+    price_add = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="Additional price to add when this option is selected."
+    )
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+
+    def __str__(self):
+        return f"{self.label} (+${self.price_add or 0})"
+    
+
+# -------------------------------------------------------------------
+#  Bundle Option Group
+# -------------------------------------------------------------------
+class BundleOptionGroup(TimeStampedModel):
+    """
+    Defines a reusable set of selectable options (checkbox, radio, etc.)
+    linked to one or more Bundles.
+    """
+
+    type = models.CharField(
+        max_length=50,
+        choices=[
+            ("checkbox", "Checkbox"),
+            ("radio", "Radio"),
+            ("dropdown", "Dropdown"),
+        ],
+        default="checkbox",
+        help_text="Type of option selection control."
+    )
+    minimum_required = models.PositiveIntegerField(default=0)
+
+    # ✅ Many-to-many relationship to BundleOptionItem
+    items = models.ManyToManyField(
+        "BundleOptionItem",
+        related_name="option_groups",
+        blank=True,
+        help_text="Select one or more items that belong to this option group."
+    )
+
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+
+    def __str__(self):
+        """
+        Display the type and number of options for easy identification.
+        """
+        item_count = self.items.count()
+        return f"{self.type.title()} Group ({item_count} option{'s' if item_count != 1 else ''})"
+
+
+# -------------------------------------------------------------------
+#  Bundle
+# -------------------------------------------------------------------
 class Bundle(TimeStampedModel):
     """
     Represents an individual bundle (e.g., 'Deal Accelerator').
+    Each bundle can have multiple option groups (ManyToMany).
     """
+
     group = models.ForeignKey(
-        BundleGroup,
+        "BundleGroup",
         related_name="bundles",
         on_delete=models.CASCADE
     )
@@ -362,25 +438,20 @@ class Bundle(TimeStampedModel):
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
 
+    # ✅ Many-to-many relationship to option groups
+    option_groups = models.ManyToManyField(
+        "BundleOptionGroup",
+        related_name="bundles",
+        blank=True,
+        help_text="Attach one or more option groups to this bundle."
+    )
+
     class Meta:
         ordering = ["sort_order", "created_at"]
         unique_together = ("group", "name")
 
     def __str__(self):
         return f"{self.name} (${self.discounted_price})"
-
-    # @property
-    # def savings(self):
-    #     """Calculate the savings amount"""
-    #     return round(self.base_price - self.discounted_price, 2)
-
-    # @property
-    # def discount_percent(self):
-    #     """Calculate discount percentage"""
-    #     if self.base_price == 0:
-    #         return 0
-    #     return round((self.savings / self.base_price) * 100, 2)
-
 
 
 
@@ -537,8 +608,7 @@ class OptionGroup(TimeStampedModel):
         help_text="Type of option selection control."
     )
     minimum_required = models.PositiveIntegerField(default=0)
-    sort_order = models.PositiveIntegerField(default=0)
-
+   
     # 🔹 Many-to-many relationship to OptionItem
     items = models.ManyToManyField(
         "OptionItem",
@@ -548,7 +618,7 @@ class OptionGroup(TimeStampedModel):
     )
 
     class Meta:
-        ordering = ["sort_order", "created_at"]
+        ordering = [ "created_at"]
 
     def __str__(self):
         """

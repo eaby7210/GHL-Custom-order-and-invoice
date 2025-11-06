@@ -17,7 +17,8 @@ from .models import (
     ServiceVariance, BundleGroup, Bundle, ServiceCategory,
     IndividualService, ServiceForm, FormItem, OptionGroup,
     OptionItem, Submenu, SubmenuItem, SubmenuPriceChange,
-    ModalOption, Disclosure
+    ModalOption, Disclosure,    BundleOptionGroup,
+    BundleOptionItem,
 )
 
 
@@ -27,29 +28,149 @@ from .models import (
 # 🔹 BUNDLE ADMIN
 # ==============================================================
 
-class BundleInline(SortableInlineAdminMixin, admin.TabularInline):
+from django.contrib import admin
+from django.utils.html import format_html
+from adminsortable2.admin import SortableAdminMixin
+
+from .models import (
+    BundleGroup,
+    Bundle,
+    BundleOptionGroup,
+    BundleOptionItem,
+)
+
+# -------------------------------------------------------------------
+#  Inline for Option Items (only inline allowed)
+# -------------------------------------------------------------------
+class BundleOptionItemInline(admin.TabularInline):
+    model = BundleOptionGroup.items.through  # Through table for M2M
+    extra = 1
+    verbose_name = "Option Item Link"
+    verbose_name_plural = "Linked Option Items"
+    autocomplete_fields = ["bundleoptionitem"] if hasattr(BundleOptionGroup.items, "field") else []
+
+
+# -------------------------------------------------------------------
+#  Bundle Option Item Admin
+# -------------------------------------------------------------------
+@admin.register(BundleOptionItem)
+class BundleOptionItemAdmin(SortableAdminMixin, admin.ModelAdmin):
+    list_display = ("label", "price_add", "disabled", "sort_order", "view_groups")
+    search_fields = ("label", "identifier")
+    list_editable = ("sort_order", "disabled")
+    ordering = ("sort_order",)
+
+    def view_groups(self, obj):
+        groups = obj.option_groups.all()
+        if not groups:
+            return "-"
+        links = [
+            f'<a href="/admin/order_page/bundleoptiongroup/{g.id}/change/">{g}</a>'
+            for g in groups
+        ]
+        return format_html("<br>".join(links))
+    view_groups.short_description = "Used In Groups"
+
+
+# -------------------------------------------------------------------
+#  Bundle Option Group Admin
+# -------------------------------------------------------------------
+@admin.register(BundleOptionGroup)
+class BundleOptionGroupAdmin(SortableAdminMixin, admin.ModelAdmin):
+    list_display = ("type", "minimum_required", "sort_order", "view_bundles", "manage_items")
+    search_fields = ("type",)
+    list_editable = ("sort_order",)
+    ordering = ("sort_order",)
+    inlines = [BundleOptionItemInline]
+
+    def view_bundles(self, obj):
+        bundles = obj.bundles.all()
+        if not bundles:
+            return "-"
+        links = [
+            f'<a href="/admin/order_page/bundle/{b.id}/change/">{b.name}</a>'
+            for b in bundles
+        ]
+        return format_html("<br>".join(links))
+    view_bundles.short_description = "Used In Bundles"
+
+    def manage_items(self, obj):
+        return format_html(
+            '<a class="button" href="/admin/order_page/bundleoptionitem/">🔗 Manage Items</a>'
+        )
+    manage_items.short_description = "Actions"
+    manage_items.allow_tags = True
+
+
+# -------------------------------------------------------------------
+#  Bundle Admin
+# -------------------------------------------------------------------
+@admin.register(Bundle)
+class BundleAdmin(SortableAdminMixin, admin.ModelAdmin):
+    list_display = (
+        "name",
+        "group",
+        "base_price",
+        "discounted_price",
+        "is_active",
+        "sort_order",
+        "manage_option_groups",
+    )
+    list_filter = ("is_active", "group")
+    search_fields = ("name", "description")
+    ordering = ("group", "sort_order")
+    filter_horizontal = ("option_groups",)
+
+    def manage_option_groups(self, obj):
+        """
+        Adds quick 'edit' and 'add' buttons for option groups.
+        """
+        edit_links = ""
+        if obj.option_groups.exists():
+            edit_links = "<br>".join(
+                [
+                    f'<a href="/admin/order_page/bundleoptiongroup/{g.id}/change/">✏️ {g}</a>'
+                    for g in obj.option_groups.all()
+                ]
+            )
+        add_link = '<a class="button" href="/admin/order_page/bundleoptiongroup/add/">➕ Add Group</a>'
+        return format_html(f"{edit_links}<br>{add_link}")
+    manage_option_groups.short_description = "Option Groups"
+
+
+# -------------------------------------------------------------------
+#  Bundle Group Admin
+# -------------------------------------------------------------------
+class BundleInline(admin.TabularInline):
     model = Bundle
     extra = 0
-    fields = ("name", "description", "base_price", "discounted_price", "is_active", "sort_order")
-    ordering = ("sort_order",)
+    fields = ("name", "base_price", "discounted_price", "is_active")
+    show_change_link = True
 
 
 @admin.register(BundleGroup)
 class BundleGroupAdmin(SortableAdminMixin, admin.ModelAdmin):
-    list_display = ("name", "header", "is_active", "sort_order")
+    list_display = ("name", "header", "is_active", "sort_order", "manage_bundles")
     list_filter = ("is_active",)
     search_fields = ("name", "header", "subheader")
     ordering = ("sort_order",)
     inlines = [BundleInline]
 
-
-@admin.register(Bundle)
-class BundleAdmin(SortableAdminMixin, admin.ModelAdmin):
-    list_display = ("name", "group", "base_price", "discounted_price", "is_active", "sort_order")
-    list_filter = ("is_active", "group")
-    search_fields = ("name", "description")
-    ordering = ("group", "sort_order")
-
+    def manage_bundles(self, obj):
+        """
+        Add quick edit / add buttons for bundles in group list page.
+        """
+        edit_links = ""
+        if obj.bundles.exists():
+            edit_links = "<br>".join(
+                [
+                    f'<a href="/admin/order_page/bundle/{b.id}/change/">✏️ {b.name}</a>'
+                    for b in obj.bundles.all()
+                ]
+            )
+        add_link = f'<a class="button" href="/admin/order_page/bundle/add/?group={obj.id}">➕ Add Bundle</a>'
+        return format_html(f"{edit_links}<br>{add_link}")
+    manage_bundles.short_description = "Manage Bundles"
 
 
 
@@ -137,16 +258,16 @@ class DisclosureAdmin(admin.ModelAdmin):
 
 @admin.register(OptionGroup)
 class OptionGroupAdmin(admin.ModelAdmin):
-    list_display = ("__str__", "type", "minimum_required", "sort_order")
-    list_editable = ("sort_order",)
+    list_display = ("__str__", "type", "minimum_required")
+   
     filter_horizontal = ("items",)
-    ordering = ("sort_order",)
-    search_fields = ("form_item__title",)
+    # ordering = ("sort_order",)
+    search_fields = ("form_item__title","__str__")
     fieldsets = (
         (None, {
             "fields": ("type", "minimum_required", "items")
         }),
-        ("Meta", {"fields": ("sort_order",)})
+        # ("Meta", {"fields": ("sort_order",)})
     )
 
 
