@@ -144,7 +144,7 @@ class BundleAdmin(SortableAdminMixin, admin.ModelAdmin):
 class BundleInline(admin.TabularInline):
     model = Bundle
     extra = 0
-    fields = ("name", "base_price", "discounted_price", "is_active")
+    fields = ("name","description", "base_price", "discounted_price", "is_active")
     show_change_link = True
 
 
