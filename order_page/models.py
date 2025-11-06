@@ -343,7 +343,7 @@ class BundleGroup(TimeStampedModel):
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        return self.header
+        return self.name
 
 
 # -------------------------------------------------------------------
