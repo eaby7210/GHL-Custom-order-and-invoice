@@ -13,7 +13,8 @@ from .models import (
     SubmenuPriceChange,
     ModalOption,
     Disclosure,
-    ServiceVariance
+    ServiceVariance,
+    BundleOptionGroup, BundleOptionItem
     
     )
 
@@ -24,32 +25,89 @@ class TermsOfConditionsSerializer(serializers.ModelSerializer):
 
 
 
+
+# -------------------------------------------------------------------
+#  Bundle Option Item Serializer
+# -------------------------------------------------------------------
+class BundleOptionItemSerializer(serializers.ModelSerializer):
+    """
+    Serializer for individual option items within a bundle option group.
+    Maps fields for frontend-friendly naming.
+    """
+    id = serializers.CharField(source="identifier")
+    label = serializers.CharField()
+    value = serializers.BooleanField()
+    disabled = serializers.BooleanField()
+    priceAdd = serializers.DecimalField(source="price_add", max_digits=10, decimal_places=2, required=False)
+
+    class Meta:
+        model = BundleOptionItem
+        fields = ["id", "label", "value", "disabled", "priceAdd"]
+
+
+# -------------------------------------------------------------------
+#  Bundle Option Group Serializer
+# -------------------------------------------------------------------
+class BundleOptionGroupSerializer(serializers.ModelSerializer):
+    """
+    Serializer for bundle option groups.
+    Outputs `type`, `minimumRequired`, and `items` to match frontend expectations.
+    """
+    minimumRequired = serializers.IntegerField(source="minimum_required")
+    items = BundleOptionItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = BundleOptionGroup
+        fields = ["type", "minimumRequired", "items"]
+
+
+# -------------------------------------------------------------------
+#  Bundle Serializer
+# -------------------------------------------------------------------
 class BundleSerializer(serializers.ModelSerializer):
     """
     Serializer for individual bundles.
-    Converts `base_price` → `basePrice` and `discounted_price` → `price`
+    Converts `base_price` → `basePrice`, `discounted_price` → `price`,
+    and includes nested options (if available).
     """
     basePrice = serializers.DecimalField(source="base_price", max_digits=10, decimal_places=2)
     price = serializers.DecimalField(source="discounted_price", max_digits=10, decimal_places=2)
+    options = serializers.SerializerMethodField()
 
     class Meta:
         model = Bundle
-        fields = ["name", "description", "basePrice", "price"]
+        fields = ["name", "description", "basePrice", "price", "options"]
+
+    def get_options(self, obj):
+        """
+        Returns structured option groups for frontend:
+        { type, minimumRequired, items: [...] }
+        If multiple groups exist, returns the first or a list (depending on use case).
+        """
+        option_groups = obj.option_groups.all()
+        if not option_groups.exists():
+            return {}
+        # If there’s only one group, return single dict (to match frontend pattern)
+        if option_groups.count() == 1:
+            return BundleOptionGroupSerializer(option_groups.first()).data
+        # If multiple groups, return list
+        return BundleOptionGroupSerializer(option_groups, many=True).data
 
 
+# -------------------------------------------------------------------
+#  Bundle Group Serializer
+# -------------------------------------------------------------------
 class BundleGroupSerializer(serializers.ModelSerializer):
     """
-    Serializer for bundle groups 
-   
+    Serializer for bundle groups that contain multiple bundles.
+    Maps to frontend format: { header, subheader, bundles: [...] }
     """
     bundles = BundleSerializer(many=True, read_only=True)
 
     class Meta:
         model = BundleGroup
         fields = ["header", "subheader", "bundles"]
-
-
-
+        
 
 class SubmenuPriceChangeSerializer(serializers.ModelSerializer):
     class Meta:
