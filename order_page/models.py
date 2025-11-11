@@ -247,7 +247,9 @@ class ServiceVariance(TimeStampedModel):
     - The default (applies to all clients)
     - Or assigned to one or more NotaryClientCompany instances
     """
-
+    class OrderProtectionType(models.TextChoices):
+        PERCENT = "percent", "Percent"
+        FIXED = "fixed", "Fixed"
     name = models.CharField(
         max_length=255,
         help_text="Version or variance name, e.g. 'Fall 2025 Edition', 'Company One Special'."
@@ -257,12 +259,27 @@ class ServiceVariance(TimeStampedModel):
         "ServiceCategory",
         related_name="variances",
         on_delete=models.CASCADE,
-        help_text="Associated service category this version applies to."
+        help_text="Associated service category this version applies to.",
+        verbose_name="Individual service variance"
     )
     bundle_group = models.ManyToManyField(
         "BundleGroup",
         related_name="variances",
         help_text="Associated bundle group this version applies to."
+    )
+    bundle_order_protection_type = models.CharField(
+        max_length=50,
+        choices=OrderProtectionType.choices,
+        blank=True,
+        null=True,
+        help_text="Type of order protection applied (percent or fixed)."
+    )
+    bundle_order_protection_value = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="The numeric value for order protection."
     )
 
     version_number = models.PositiveIntegerField(
@@ -378,11 +395,13 @@ class BundleOptionItem(TimeStampedModel):
 # -------------------------------------------------------------------
 #  Bundle Option Group
 # -------------------------------------------------------------------
+
 class BundleOptionGroup(TimeStampedModel):
     """
     Defines a reusable set of selectable options (checkbox, radio, etc.)
     linked to one or more Bundles.
     """
+
 
     type = models.CharField(
         max_length=50,
@@ -396,7 +415,7 @@ class BundleOptionGroup(TimeStampedModel):
     )
     minimum_required = models.PositiveIntegerField(default=0)
 
-    # ✅ Many-to-many relationship to BundleOptionItem
+
     items = models.ManyToManyField(
         "BundleOptionItem",
         related_name="option_groups",
@@ -486,11 +505,11 @@ class IndividualService(TimeStampedModel):
         PERCENT = "percent", "Percent"
         FIXED = "fixed", "Fixed"
 
-    service_id = models.CharField(max_length=100, unique=False)
+    service_id = models.CharField(max_length=100, unique=False, help_text="Make this short as possible, This will be used in combined product name in NotaryDash.")
     title = models.CharField(max_length=255)
     subtitle = models.CharField(max_length=512, blank=True, null=True)
     header = models.CharField(max_length=255, blank=True, null=True)
-    subheader_html = models.TextField(blank=True, null=True)
+    subheader_html = models.TextField(blank=True, null=True, verbose_name="Sub-Header")
 
     order_protection = models.BooleanField(default=False)
     order_protection_disabled = models.BooleanField(default=False)
@@ -515,7 +534,8 @@ class IndividualService(TimeStampedModel):
         on_delete=models.SET_NULL,
         blank=True,
         null=True,
-        help_text="Link to the service form directly (reverse OneToOne)."
+        help_text="Choose or create Service Items set",
+        verbose_name="Service Item set"
     )
 
     sort_order = models.PositiveIntegerField(default=0)
@@ -643,9 +663,13 @@ class OptionItem(TimeStampedModel):
     """
     identifier = models.CharField(max_length=100)
     label = models.CharField(max_length=255)
-    value = models.BooleanField(default=False)
+    value = models.BooleanField(default=False, verbose_name="Default Check")
     disabled = models.BooleanField(default=False)
-    price_change = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    price_type = models.CharField(max_length=15, choices=[
+            ("priceAdd", "Addition"),
+            ("priceChange", "Change Into"),
+        ], help_text="Price altering behavior")
+    price_value= models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -667,7 +691,7 @@ class OptionItem(TimeStampedModel):
 class Submenu(TimeStampedModel):
     
     type = models.CharField(max_length=50, default="mixed")
-    label = models.CharField(max_length=255, blank=True, null=True)
+    name = models.CharField(max_length=255, blank=True, null=True)
     sort_order = models.PositiveIntegerField(default=0)
     items = models.ManyToManyField(
         "SubmenuItem",
@@ -680,63 +704,102 @@ class Submenu(TimeStampedModel):
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        label_display = self.label or "Untitled"
+        label_display = self.name or "Untitled"
         return f"{label_display} ({self.type.title()}) Submenu" #type:ignore
     
 
 
+
 class SubmenuItem(TimeStampedModel):
-    
     identifier = models.CharField(max_length=100)
     label = models.CharField(max_length=255)
-    type = models.CharField(max_length=50, blank=True, null=True)  # radio, counter, etc.
-    value = models.CharField(max_length=255, blank=True, null=True)
+    type = models.CharField(
+        max_length=50,
+        choices=[
+            ("radio", "Radio"),
+            ("counter", "Counter"),
+        ],
+        blank=True,
+        null=True,
+        help_text="You cannot have Submenu type as Radio and Price modifier type as Multiple which breacks the order page"
+    )
+    value = models.JSONField(blank=True, null=True)
+    form_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Used in HTML form",
+        verbose_name="Form Name",
+    )
     min_value = models.IntegerField(blank=True, null=True)
     max_value = models.IntegerField(blank=True, null=True)
     sort_order = models.PositiveIntegerField(default=0)
-    price_changes = models.ManyToManyField(
-        "SubmenuPriceChange",
-        related_name="submenu_items",
-        blank=True,
-        help_text="Optional price modifications linked to this submenu item."
-    )
 
     class Meta:
         ordering = ["sort_order", "created_at"]
 
-    def __str__(self):
-        """
-        Display label and linked submenus or price modifiers.
-        """
-        linked_menus = list(self.submenus.values_list("label", flat=True)) if hasattr(self, "submenus") else []  # type: ignore
-        linked_prices = list(self.price_changes.values_list("key", flat=True)) if hasattr(self, "price_changes") else []
-        label_info = self.label
-        if linked_menus:
-            label_info += f" (Used in: {', '.join([m or 'Unnamed' for m in linked_menus])})"
-        if linked_prices:
-            label_info += f" [Pricing: {', '.join(linked_prices)}]"
-        return label_info
+    def save(self, *args, **kwargs):
+        """Automatically assign default value based on type."""
+        if self.value is None:
+            if self.type == "radio":
+                self.value = False
+            elif self.type == "counter":
+                self.value = 0
+        super().save(*args, **kwargs)
 
+
+    def __str__(self):
+        return self.label
 # -------------------------------------------------------------------
-#SubmenuPriceChange (NEW)
+#SubmenuPriceChange
 # -------------------------------------------------------------------
 class SubmenuPriceChange(TimeStampedModel):
     """
-    Represents pricing modifiers for specific submenus (like 'pages11_39', 'witness', etc.)
+    Represents pricing modifiers for specific submenu items (like 'pages11_39', 'witness', etc.)
+    Applied to a specific FormItem.
     """
 
-    key = models.CharField(max_length=100, help_text="Submenu key, e.g. 'pages11_39'")
-    change_type = models.CharField(max_length=20, choices=[
-        ("add", "Add"),
-        ("multiple", "Multiple")
-    ])
+    form_item = models.ForeignKey(
+        "FormItem",
+        related_name="submenu_price_changes",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The form item (e.g. 'NTinperson') this price change applies to."
+    )
+
+    submenu_item = models.ForeignKey(
+        "SubmenuItem",
+        related_name="price_modifiers",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="The submenu item (e.g. 'pages11_39', 'witness') this modifier applies to."
+    )
+
+    change_type = models.CharField(
+        max_length=20,
+        choices=[
+            ("add", "Add"),
+            ("multiple", "Multiple"),
+        ],
+        help_text="How this price modifies the base (additive or multiplier)."
+    )
+
     value = models.DecimalField(
         max_digits=10,
-        decimal_places=2, null=True, blank=True)
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="The numeric amount or multiplier value."
+    )
+
+    class Meta:
+        unique_together = ("form_item", "submenu_item")
+        ordering = ["form_item", "submenu_item"]
 
     def __str__(self):
-        return f"{self.key} ({self.change_type}: {self.value})"
-
+        return f"{self.form_item.identifier} → {self.submenu_item.identifier} ({self.change_type}: {self.value})" #type: ignore
 
 # -------------------------------------------------------------------
 # Modal Option (custom inline forms like “Lockbox code”)
@@ -759,6 +822,12 @@ class ModalOption(TimeStampedModel):
     ) # text, email, number, etc.
     required = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
+    valid_for_items = models.ManyToManyField(
+        "FormItem",
+        related_name="modal_valid_options",
+        blank=True,
+        help_text="Select the FormItems this modal option only applies to (Leave it blank to applied in all items)."
+    )
 
     class Meta:
         ordering = ["sort_order", "created_at"]
@@ -777,7 +846,12 @@ class Disclosure(TimeStampedModel):
     service = models.ForeignKey(
         IndividualService, related_name="disclosures", on_delete=models.CASCADE
     )
-    type = models.CharField(max_length=50, default="info", help_text="e.g., 'info', 'warning'")
+    type = models.CharField(max_length=50, default="info",        choices=[
+            ("info", "Info"),
+            ("warning", "Warning"),
+            ("success", "Success"),
+            ("danger", "Danger"),
+        ], help_text="Text color variations")
     message = models.TextField(help_text="Disclosure or information message to show")
     sort_order = models.PositiveIntegerField(default=0)
 

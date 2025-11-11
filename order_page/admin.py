@@ -1,47 +1,31 @@
 # admin.py
 from django.contrib import admin
-from .models import TermsOfConditions
 from django_summernote.admin import SummernoteModelAdmin
-from django import forms
+from adminsortable2.admin import SortableAdminMixin, SortableInlineAdminMixin
+from .models import (
+    TermsOfConditions,ServiceVariance, BundleGroup, Bundle, ServiceCategory,
+    IndividualService, ServiceForm, FormItem, OptionGroup,
+    OptionItem, Submenu, SubmenuItem, SubmenuPriceChange,
+    ModalOption, Disclosure,    BundleOptionGroup,
+    BundleOptionItem,
+        BundleGroup,
+        Bundle,
+        BundleOptionGroup,
+        BundleOptionItem,
+)
+from .forms import SubmenuItemForm
+from django.utils.html import format_html
+
 
 
 @admin.register(TermsOfConditions)
 class TermsOfConditionsAdmin(SummernoteModelAdmin):
     summernote_fields = ('body',)
-
-from django.contrib import admin
-from django_summernote.admin import SummernoteModelAdmin
-from adminsortable2.admin import SortableAdminMixin, SortableInlineAdminMixin
-
-from .models import (
-    ServiceVariance, BundleGroup, Bundle, ServiceCategory,
-    IndividualService, ServiceForm, FormItem, OptionGroup,
-    OptionItem, Submenu, SubmenuItem, SubmenuPriceChange,
-    ModalOption, Disclosure,    BundleOptionGroup,
-    BundleOptionItem,
-)
-
-
-
-
-# ==============================================================
-# 🔹 BUNDLE ADMIN
-# ==============================================================
-
-from django.contrib import admin
-from django.utils.html import format_html
-from adminsortable2.admin import SortableAdminMixin
-
-from .models import (
-    BundleGroup,
-    Bundle,
-    BundleOptionGroup,
-    BundleOptionItem,
-)
-
+    
 # -------------------------------------------------------------------
 #  Inline for Option Items (only inline allowed)
 # -------------------------------------------------------------------
+
 class BundleOptionItemInline(admin.TabularInline):
     model = BundleOptionGroup.items.through  # Through table for M2M
     extra = 1
@@ -188,7 +172,7 @@ class ServiceVarianceAdmin(admin.ModelAdmin):
         ("Variance Details", {
             "fields": (
                 "name", "notes", "version_number",
-                "service_category", "bundle_group",
+                "service_category","bundle_order_protection_type","bundle_order_protection_value", "bundle_group",
             )
         }),
         ("Status & Control", {
@@ -214,24 +198,40 @@ class ServiceVarianceAdmin(admin.ModelAdmin):
 
 @admin.register(OptionItem)
 class OptionItemAdmin(admin.ModelAdmin):
-    list_display = ("label", "identifier", "value", "disabled", "price_change", "sort_order")
+    list_display = ("label", "identifier", "value", "disabled",  "sort_order")
     list_editable = ("sort_order",)
     search_fields = ("label", "identifier")
     list_filter = ("disabled",)
     ordering = ("sort_order",)
     fieldsets = (
-        (None, {"fields": ("identifier", "label", "value", "disabled", "price_change")}),
+        (None, {"fields": ("identifier", "label", "value", "disabled","price_type","price_value")}),
         ("Ordering", {"fields": ("sort_order",)}),
     )
 
 
 @admin.register(SubmenuPriceChange)
 class SubmenuPriceChangeAdmin(admin.ModelAdmin):
-    list_display = ("key", "change_type", "value")
-    search_fields = ("key",)
+    list_display = ("submenu_item", "form_item", "change_type", "value")
+    search_fields = (
+        "submenu_item__identifier",
+        "form_item__identifier",
+        "change_type",
+    )
     list_editable = ("value",)
-    ordering = ("key",)
+    ordering = ("submenu_item__identifier",)
     list_filter = ("change_type",)
+    autocomplete_fields = ("form_item", "submenu_item")
+
+
+class SubmenuPriceChangeInline(admin.TabularInline):
+    model = SubmenuPriceChange
+    extra = 1
+    autocomplete_fields = ("form_item",)
+    fields = ("form_item", "change_type", "value")
+    ordering = ("form_item__sort_order",)
+    verbose_name = "Form Item Price Modifier"
+    verbose_name_plural = "Linked Form Item Price Modifiers"
+
 
 
 @admin.register(ModalOption)
@@ -252,9 +252,6 @@ class DisclosureAdmin(admin.ModelAdmin):
     ordering = ("sort_order",)
     autocomplete_fields = ("service",)
 
-# ----------------------------------------------------------
-# 🔹 Mid-Level Models (OptionGroup, Submenu, SubmenuItem)
-# ----------------------------------------------------------
 
 @admin.register(OptionGroup)
 class OptionGroupAdmin(admin.ModelAdmin):
@@ -273,43 +270,98 @@ class OptionGroupAdmin(admin.ModelAdmin):
 
 @admin.register(SubmenuItem)
 class SubmenuItemAdmin(admin.ModelAdmin):
-    list_display = ("label", "identifier", "type", "min_value", "max_value", "sort_order")
+    form = SubmenuItemForm
+    list_display = (
+        "label", "identifier", "type", "display_value",
+        "min_value", "max_value", "sort_order"
+    )
     list_editable = ("sort_order",)
-    filter_horizontal = ("price_changes",)
     search_fields = ("label", "identifier")
     list_filter = ("type",)
     ordering = ("sort_order",)
+    inlines = [SubmenuPriceChangeInline]
+
+    # Base fieldsets (used for editing)
+    fieldsets = (
+        (None, {
+            "fields": (
+                "identifier",
+                "label",
+                "type",
+                "value",     
+                "form_name",
+                "min_value",
+                "max_value",
+            )
+        }),
+        ("Ordering", {"fields": ("sort_order",)}),
+    )
+
+    # def get_fieldsets(self, request, obj=None):
+    #     """
+    #     Hide 'value' field on create form,
+    #     show it only on edit.
+    #     """
+    #     fieldsets = super().get_fieldsets(request, obj)
+
+    #     # If obj is None → creating new item → hide 'value'
+    #     if obj is None:
+    #         new_fieldsets = []
+    #         for name, data in fieldsets:
+    #             fields = tuple(f for f in data["fields"] if f != "value")
+    #             new_fieldsets.append((name, {**data, "fields": fields}))
+    #         return new_fieldsets
+    #     return fieldsets
+
+    def display_value(self, obj):
+        """Show a readable preview in the list view."""
+        if obj.type == "radio":
+            return "✅ True" if obj.value else "False"
+        if obj.type == "counter":
+            return f"{obj.value or 0}"
+        return obj.value
+    display_value.short_description = "Default Value"
+    
+    class Media:
+        js = ("order_page/js/submenuitem_admin.js",)
 
 
 @admin.register(Submenu)
 class SubmenuAdmin(admin.ModelAdmin):
-    list_display = ("label", "type", "sort_order")
+    list_display = ("name", "type", "sort_order")
     list_editable = ("sort_order",)
     filter_horizontal = ("items",)
-    search_fields = ("label",)
+    search_fields = ("name",)
     ordering = ("sort_order",)
     fieldsets = (
-        (None, {"fields": ("label", "type", "items")}),
+        (None, {"fields": ("name", "type", "items")}),
         ("Meta", {"fields": ("sort_order",)}),
     )
 
-# ----------------------------------------------------------
-# 🔹 FormItem & ServiceForm Admins (Core of configuration)
-# ----------------------------------------------------------
+
 
 @admin.register(FormItem)
-class FormItemAdmin(admin.ModelAdmin):
-    list_display = ("title", "identifier", "price", "base_price", "protection_invalid", "sort_order")
+class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
+    list_display = ("title", "identifier", "price", "protection_invalid", "sort_order")
     list_editable = ("sort_order",)
     search_fields = ("title", "identifier")
     autocomplete_fields = ("option_group",)
     ordering = ("sort_order",)
     fieldsets = (
         (None, {
-            "fields": ("identifier", "title", "subtitle", "price", "base_price", "protection_invalid", "option_group")
+            "fields": (
+                "identifier",
+                "title",
+                "subtitle",
+                "price",
+                "base_price",
+                "protection_invalid",
+                "option_group",
+            )
         }),
-        ("Ordering", {"fields": ("sort_order",)})
+        ("Ordering", {"fields": ("sort_order",)}),
     )
+
 
 
 @admin.register(ServiceForm)
@@ -327,9 +379,7 @@ class ServiceFormAdmin(admin.ModelAdmin):
         }),
     )
 
-# ----------------------------------------------------------
-# 🔹 IndividualService & ServiceCategory
-# ----------------------------------------------------------
+
 
 class DisclosureInline(admin.TabularInline):
     model = Disclosure
@@ -339,7 +389,7 @@ class DisclosureInline(admin.TabularInline):
 
 
 @admin.register(IndividualService)
-class IndividualServiceAdmin(admin.ModelAdmin):
+class IndividualServiceAdmin(SummernoteModelAdmin):
     list_display = (
         "title",
         "service_id",
@@ -354,6 +404,7 @@ class IndividualServiceAdmin(admin.ModelAdmin):
     ordering = ("sort_order",)
     autocomplete_fields = ("form_ref",)
     inlines = [DisclosureInline]
+    summernote_fields = ('subheader_html',)
 
     fieldsets = (
         ("Basic Info", {

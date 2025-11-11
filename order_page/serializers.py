@@ -110,122 +110,182 @@ class BundleGroupSerializer(serializers.ModelSerializer):
         
 
 class SubmenuPriceChangeSerializer(serializers.ModelSerializer):
+    key = serializers.CharField(source="submenu_item.identifier")
+    type = serializers.CharField(source="change_type")
     class Meta:
         model = SubmenuPriceChange
-        fields = ["key", "change_type", "value"]
+        fields = ["key", "type", "value"]
 
 class SubmenuItemSerializer(serializers.ModelSerializer):
-    price_changes = SubmenuPriceChangeSerializer(
-        many=True,
-        read_only=True,
-        # source="price_changes"
-        )
+    id = serializers.CharField(source="identifier")
+    valid_item_index = serializers.SerializerMethodField()
+    name = serializers.CharField(source="form_name")
 
     class Meta:
         model = SubmenuItem
         fields = [
-            "identifier",
+            "id",
             "label",
+            "name",
             "type",
             "value",
             "min_value",
             "max_value",
-            "price_changes",
+            "valid_item_index",
         ]
+
+    def get_valid_item_index(self, obj):
+        return []
 
 class SubmenuSerializer(serializers.ModelSerializer):
     items = SubmenuItemSerializer(many=True, read_only=True)
 
     class Meta:
         model = Submenu
-        fields = ["type", "label", "items"]
+        fields = ["type", "items"]
 
 class OptionItemSerializer(serializers.ModelSerializer):
-    # Matches JS: { id, label, value, disabled, priceChange }
+    """
+    Serializer for OptionItem supporting dynamic key:
+    -> If price_type = "priceAdd", outputs {"priceAdd": <value>}
+    -> If price_type = "priceChange", outputs {"priceChange": <value>}
+    """
+    id = serializers.CharField(source="identifier")
+    valid_item_index = serializers.SerializerMethodField()
+    priceAdd = serializers.SerializerMethodField()
+    priceChange = serializers.SerializerMethodField()
+
     class Meta:
         model = OptionItem
         fields = [
-            "identifier",
+            "id",
             "label",
             "value",
             "disabled",
-            "price_change",
+            "priceAdd",
+            "priceChange",
+            "valid_item_index",
         ]
+
+    def get_valid_item_index(self, obj):
+        return []  # JS expects an empty array always
+
+    def get_priceAdd(self, obj):
+        if obj.price_type == "priceAdd" and obj.price_value is not None:
+            return float(obj.price_value)
+        return None
+
+    def get_priceChange(self, obj):
+        if obj.price_type == "priceChange" and obj.price_value is not None:
+            return float(obj.price_value)
+        return None
+
 
 class OptionGroupSerializer(serializers.ModelSerializer):
     items = OptionItemSerializer(many=True, read_only=True)
+    minimumRequired = serializers.IntegerField(source="minimum_required")
 
     class Meta:
         model = OptionGroup
         fields = [
             "type",
-            "minimum_required",
+            "minimumRequired",
             "items",
         ]
 
 class FormItemSerializer(serializers.ModelSerializer):
+    id = serializers.CharField(source="identifier")
+    basePrice = serializers.DecimalField(source="base_price", max_digits=10, decimal_places=2, allow_null=True)
+    protectionInvalid = serializers.BooleanField(source="protection_invalid")
     options = OptionGroupSerializer(source="option_group", read_only=True)
-    submenu_price_changes = serializers.SerializerMethodField()
+    submenuPriceChange = serializers.SerializerMethodField()
 
     class Meta:
         model = FormItem
         fields = [
-            "identifier",
+            "id",
             "title",
             "subtitle",
             "price",
-            "base_price",
-            "protection_invalid",
+            "basePrice",
+            "protectionInvalid",
             "options",
-            "submenu_price_changes",
+            "submenuPriceChange",
         ]
 
-    def get_submenu_price_changes(self, obj):
+    def get_submenuPriceChange(self, obj):
         """
-        Returns submenu price changes as a dict structure like:
+        Output exactly like:
         {
-          "pages11_39": { "type": "add", "value": 30 },
-          "witness": { "type": "multiple", "value": 25 }
+            "pages11_39": { "type": "add", "value": 30 },
+            "witness": { "type": "multiple", "value": 25 }
         }
         """
-        if not hasattr(obj, "option_group") or not obj.option_group:
-            return None
-        # Collect related submenu price changes through related submenu items if any
-        submenu_changes = {}
-        submenu_items = SubmenuItem.objects.filter(price_changes__isnull=False).distinct()
-        for item in submenu_items:
-            for change in item.price_changes.all():
-                submenu_changes[change.key] = {
-                    "type": change.change_type,
-                    "value": change.value,
-                }
-        return submenu_changes or None
+        changes = {}
+        for change in obj.submenu_price_changes.select_related("submenu_item").all():
+            key = change.submenu_item.identifier
+            changes[key] = {
+                "type": change.change_type,
+                "value": float(change.value) if change.value is not None else None,
+            }
+        return changes or {}
+
 
 class ModalOptionSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="field_name")
+    type = serializers.CharField(source="field_type")
+    valid_item_index = serializers.SerializerMethodField()
+
     class Meta:
         model = ModalOption
         fields = [
-            "each_item",
             "label",
-            "field_name",
-            "field_type",
+            "name",
+            "type",
             "required",
+            "valid_item_index",
         ]
 
+    def get_valid_item_index(self, obj):
+        """
+        Return an array of linked FormItem identifiers.
+        If none are linked, return [] (applies to all).
+        """
+        items = obj.valid_for_items.values_list("identifier", flat=True)
+        return list(items) if items else []
+
+        
 class ServiceFormSerializer(serializers.ModelSerializer):
     items = FormItemSerializer(many=True, read_only=True)
-    submenus = SubmenuSerializer(many=True, read_only=True)
-    modal_options = ModalOptionSerializer(many=True, read_only=True)
+    submenu = serializers.SerializerMethodField()
+    modalOption = serializers.SerializerMethodField()
+    options = serializers.SerializerMethodField()
 
     class Meta:
         model = ServiceForm
-        fields = [
-            "title",
-            "description",
-            "items",
-            "submenus",
-            "modal_options",
-        ]
+        fields = ["title", "description", "items", "options", "submenu", "modalOption"]
+
+    def get_options(self, obj):
+        # JS expects "options": {} always
+        return {}
+
+    def get_submenu(self, obj):
+        submenus = obj.submenus.all()
+        if not submenus.exists():
+            return {}
+        # JS expects single submenu structure, not a list
+        first = submenus.first()
+        return SubmenuSerializer(first).data
+
+    def get_modalOption(self, obj):
+        modals = obj.modal_options.all()
+        if not modals.exists():
+            return {}
+        return {
+            "eachItem": False,
+            "validItem": [],
+            "form": ModalOptionSerializer(modals, many=True).data,
+        }
 
 class DisclosureSerializer(serializers.ModelSerializer):
     class Meta:
@@ -234,6 +294,7 @@ class DisclosureSerializer(serializers.ModelSerializer):
 
 class IndividualServiceSerializer(serializers.ModelSerializer):
     id = serializers.CharField(source="service_id")
+    subheader = serializers.CharField(source="subheader_html")
     form = ServiceFormSerializer(source="form_ref", read_only=True)
     disclosure = DisclosureSerializer(many=True, source="disclosures", read_only=True)
 
@@ -244,7 +305,7 @@ class IndividualServiceSerializer(serializers.ModelSerializer):
             "title",
             "subtitle",
             "header",
-            "subheader_html",
+            "subheader",
             "order_protection",
             "order_protection_type",
             "order_protection_disabled",

@@ -7,3 +7,4 @@ asstes
 __pycache__
 celerybeat-schedule
 *.log
+static
