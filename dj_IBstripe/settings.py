@@ -10,10 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+# import os
 from pathlib import Path
 from decouple import config
 from celery.schedules import crontab
-import os
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -34,7 +34,7 @@ SCOPES = config('SCOPES')
 REDIRECT_URI = config('REDIRECT_URI')
 
 
-STRIPE_TEST= not (str(config('STRIPE_LIVE')).lower() == 'true') if config('STRIPE_LIVE') else True
+STRIPE_TEST = str(config('STRIPE_LIVE')).lower() != 'true' if config('STRIPE_LIVE') else True
 
 if STRIPE_TEST:
     
@@ -141,7 +141,7 @@ else:
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
-STATIC_ROOT =  BASE_DIR / "static"
+STATIC_ROOT = BASE_DIR / "static"
 
 
 

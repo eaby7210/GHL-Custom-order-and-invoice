@@ -354,7 +354,7 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
                 "title",
                 "subtitle",
                 "price",
-                "base_price",
+                # "base_price",
                 "protection_invalid",
                 "option_group",
             )

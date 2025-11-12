@@ -120,6 +120,8 @@ class SubmenuItemSerializer(serializers.ModelSerializer):
     id = serializers.CharField(source="identifier")
     valid_item_index = serializers.SerializerMethodField()
     name = serializers.CharField(source="form_name")
+    min = serializers.DecimalField(max_digits=10, decimal_places=2, source="min_value")
+    max = serializers.DecimalField(max_digits=10, decimal_places=2, source="max_value")
 
     class Meta:
         model = SubmenuItem
@@ -129,8 +131,8 @@ class SubmenuItemSerializer(serializers.ModelSerializer):
             "name",
             "type",
             "value",
-            "min_value",
-            "max_value",
+            "min",
+            "max",
             "valid_item_index",
         ]
 
