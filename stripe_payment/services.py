@@ -3,7 +3,7 @@ import requests
 import json, time
 from django.conf import settings
 
-def request_with_retry(url, headers, params=None, max_retries=3, delay=3):
+def request_with_retry(url, headers, params=None, max_retries=8, delay=4):
     """
     Performs GET request with automatic retry on status 429.
     
