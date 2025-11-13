@@ -1,8 +1,40 @@
 from core.services import OAuthServices
 import requests
-import json
+import json, time
 from django.conf import settings
 
+def request_with_retry(url, headers, params=None, max_retries=3, delay=3):
+    """
+    Performs GET request with automatic retry on status 429.
+    
+    Args:
+        url (str): Request URL
+        headers (dict): Request headers
+        params (dict): Query params
+        max_retries (int): Max retry attempts
+        delay (int/float): Delay between retries (seconds)
+    """
+    attempt = 0
+
+    while attempt < max_retries:
+        response = requests.get(url, headers=headers, params=params)
+
+        # success
+        if 200 <= response.status_code < 300:
+            return response
+
+        # rate limited → retry
+        if response.status_code == 429:
+            attempt += 1
+            print(f"⚠️ Rate limit hit (429). Retrying in {delay} seconds... [{attempt}/{max_retries}]")
+            time.sleep(delay)
+            continue
+
+        # other error → stop retrying
+        return response
+
+    print("❌ Max retries exceeded for:", url)
+    return None
 
 class InvoiceServices:
     
@@ -78,66 +110,77 @@ Notary_header={
 class NotaryDashServices:
     
     @staticmethod
-    def get_clients(url = None):
-        if not bool(url):
+    def get_clients(url=None):
+        if not url:
             url = f"{BASE_URL}/api/v2/clients"
-        response = requests.get(url, headers=Notary_header)
-        if response.status_code >= 200 and response.status_code < 300:
+
+        response = request_with_retry(url, headers=Notary_header)
+
+        if response and 200 <= response.status_code < 300:
             print("✅ Clients retrieved successfully.")
             return response.json()
-        else:
-            print(f"❌ Failed to retrieve clients: {response.status_code} - {response.text}")
-            return None
-    
+
+        print(f"❌ Failed to retrieve clients: {response.status_code if response else 'No Response'}")
+        return None
+
     @staticmethod
     def get_client(id: str):
         url = f"{BASE_URL}/api/v2/clients/{id}"
-        response = requests.get(url,headers=Notary_header)
-        if response.status_code >= 200 and response.status_code < 300:
-            print("✅ Clients retrieved successfully.")
-            return response.json()
-        else:
-            print(f"❌ Failed to retrieve clients: {response.status_code} - {response.text}")
-            return None
         
-    
-    @staticmethod
-    def get_client_user(client_id, url = None):
-        if not bool(url):
-            url = f"{BASE_URL}/api/v2/clients/{client_id}/users"
-        response = requests.get(url, headers=Notary_header)
-        if response.status_code >= 200 and response.status_code < 300:
-            print(f"✅ Client user for client {client_id} retrieved successfully.")
-            # print(json.dumps(response.json(), indent=4))
+        response = request_with_retry(url, headers=Notary_header)
+
+        if response and 200 <= response.status_code < 300:
+            print("✅ Client retrieved successfully.")
             return response.json()
-        else:
-            print(f"❌ Failed to retrieve client user for client {client_id}: {response.status_code} - {response.text}")
-            return None
+
+        print(f"❌ Failed to retrieve client: {response.status_code if response else 'No Response'}")
+        return None
+
     
     @staticmethod
     def get_client_one_user(client_id, user_id):
         url = f"{BASE_URL}/api/v2/clients/{client_id}/users/{user_id}"
-        response = requests.get(url,headers=Notary_header)
-        if response.status_code >= 200 and response.status_code < 300:
-            print(f"✅ Client user for client {client_id} retrieved successfully.")
-            # print(json.dumps(response.json(), indent=4))
+
+        response = request_with_retry(url, headers=Notary_header)
+
+        if response and 200 <= response.status_code < 300:
+            print(f"✅ Single client user retrieved successfully.")
             return response.json()
-        else:
-            print(f"❌ Failed to retrieve client user for client {client_id}: {response.status_code} - {response.text}")
-            return None
-        
+
+        print(f"❌ Failed: {response.status_code if response else 'No Response'}")
+        return None
+
+
+    
+    @staticmethod
+    def get_client_user(client_id, url=None):
+        if not url:
+            url = f"{BASE_URL}/api/v2/clients/{client_id}/users"
+
+        response = request_with_retry(url, headers=Notary_header)
+
+        if response and 200 <= response.status_code < 300:
+            print(f"✅ Client user for client {client_id} retrieved successfully.")
+            return response.json()
+
+        print(f"❌ Failed client user {client_id}: {response.status_code if response else 'No Response'}")
+        return None
+
       
     @staticmethod
-    def get_products(company_id, is_global:bool):
+    def get_products(company_id, is_global: bool):
         url = f"{BASE_URL}/api/v2/companies/{company_id}/products"
         params = {"global": is_global}
-        response = requests.get(url, headers=Notary_header, params=params)
-        if response.status_code >= 200 and response.status_code < 300:
+
+        response = request_with_retry(url, headers=Notary_header, params=params)
+
+        if response and 200 <= response.status_code < 300:
             print(f"✅ Products for company {company_id} retrieved successfully.")
             return response.json()
-        else:
-            print(f"❌ Failed to retrieve products for company {company_id}: {response.status_code} - {response.text}")
-            return None
+
+        print(f"❌ Failed products for company {company_id}: {response.status_code if response else 'No Response'}")
+        return None
+
     
     @staticmethod
     def create_order(data):

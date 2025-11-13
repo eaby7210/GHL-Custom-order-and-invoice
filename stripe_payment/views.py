@@ -26,11 +26,12 @@ from stripe._error import SignatureVerificationError, StripeError
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+
 from django.utils.dateparse import parse_datetime
-from django.utils.timezone import make_aware
+from django.utils.timezone import make_aware, now
 from django.template.loader import render_to_string
 import datetime
-
+from stripe_payment.models import NotaryClientCompany, NotaryUser
 import re
 from django.utils.timezone import now
 
@@ -242,35 +243,121 @@ class FormSubmissionAPIView(APIView):
         # Else, return JSON response
         return Response(data, status=status_code)
 
+
 @api_view(['GET'])
 def notary_view(request):
-    if request.method == "GET":
-        company_id =request.query_params.get('company_id')
-        user_id = request.query_params.get('user_id')
-        print(f"got is {company_id} {user_id}")
-        if (not company_id) or (not user_id):
-            msg = "Company ID and User ID are required."
-            return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
+    company_id = request.query_params.get('company_id')
+    user_id = request.query_params.get('user_id')
+
+    if not company_id or not user_id:
+        return Response(
+            {"error": "Company ID and User ID are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # -----------------------------------------------------
+    # 1️⃣  FETCH OR CREATE COMPANY
+    # -----------------------------------------------------
+    company = NotaryClientCompany.objects.filter(id=company_id).first()
+
+    if not company:
+        # Fetch from API
+        comp_resp = NotaryDashServices.get_client(company_id)
+        if not comp_resp:
+            return Response({"message": "Error on fetching Client"}, status=400)
+
+        comp_data = comp_resp.get("data") or {}
+        owner_id = comp_data.get("owner_id")
+
+        if not owner_id:
+            return Response(
+                {"message": "Error on fetching Owner ID"}, status=400
+            )
+
+        # Save company
+        company = NotaryClientCompany.objects.create(
+            id=comp_data["id"],
+            owner_id=comp_data["owner_id"],
+            parent_company_id=comp_data.get("parent_company_id"),
+            type=comp_data["type"],
+            company_name=comp_data["company_name"],
+            parent_company_name=comp_data.get("parent_company_name"),
+            attr=comp_data.get("attr", {}),
+            address=comp_data.get("address", {}),
+            deleted_at=comp_data.get("deleted_at"),
+            created_at=comp_data.get("created_at"),
+            updated_at=comp_data.get("updated_at"),
+            active=comp_data.get("active", True),
+        )
+    else:
+        owner_id = company.owner_id
+
+    # -----------------------------------------------------
+    # 2️⃣  FETCH OR CREATE USER
+    # -----------------------------------------------------
+    user = NotaryUser.objects.filter(id=user_id).first()
+
+    first_visit = False
+
+    if not user:
+        # Fetch from API
+        user_resp = NotaryDashServices.get_client_one_user(company_id, user_id)
+        if not user_resp:
+            return Response({"message": "Error on fetching Client User"}, status=400)
+
+        u = user_resp.get("data") or {}
+
+        # Create new User entry
+        user = NotaryUser.objects.create(
+            id=u["id"],
+            email=u.get("email"),
+            email_unverified=u.get("email_unverified"),
+            first_name=u.get("first_name", ""),
+            last_name=u.get("last_name", ""),
+            name=u.get("name", ""),
+            photo_url=u.get("photo_url"),
+            deleted_at=u.get("deleted_at"),
+            last_login_at=u.get("last_login_at"),
+            last_ip=u.get("last_ip"),
+            last_company=company,
+            attr=u.get("attr", {}),
+            disabled=u.get("disabled"),
+            type=u.get("type") or "",
+            country_code=u.get("country_code"),
+            tz=u.get("tz"),
+            created_at=u.get("created_at", now()),
+            updated_at=u.get("updated_at", now()),
+            has_roles=u.get("hasRoles", []),
+            pivot_active=True,
+            pivot_role_id=None,
+            pivot_company=None,
+            page_visited=True,  # First time visit
+        )
+
+        first_visit = True
+
+    else:
+        # User exists → check first visit
+        if not user.page_visited:
+            user.page_visited = True
+            user.save()
+            first_visit = True
         else:
-            response = NotaryDashServices.get_client(company_id)
-            if not response:
-                return Response({"message":"Error on fetching Client"},status=status.HTTP_400_BAD_REQUEST)
-            else:
-                owner_id = response.get("data").get("owner_id")
-                if not owner_id:
-                    print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
-                    return Response({"message":"Error on fetching Owner ID"},status=status.HTTP_400_BAD_REQUEST)
-                client = NotaryDashServices.get_client_one_user(company_id,user_id)
-                if not client:
-                    return Response({"message":"Error on fetching Client User"},status=status.HTTP_400_BAD_REQUEST)
-            return Response({
-                "message": "Successfully fetched Notary Client",
-                "client": company_id,
-                "user_id": user_id,
-                "owner_id": owner_id
-            }, status=status.HTTP_200_OK)
-    return Response({
-        "message": "Notary view is not implemented yet"},status= status.HTTP_500_INTERNAL_SERVER_ERROR)
+            first_visit = False
+
+    # -----------------------------------------------------
+    # 3️⃣  RETURN RESPONSE
+    # -----------------------------------------------------
+    return Response(
+        {
+            "message": "Successfully fetched Notary Client",
+            "client": company_id,
+            "user_id": user_id,
+            "owner_id": owner_id,
+            "first_visit": first_visit,
+        },
+        status=200,
+    )
 
 @api_view(['GET'])
 def stripe_coupon(request, coupon_code):
