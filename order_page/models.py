@@ -363,18 +363,31 @@ class BundleGroup(TimeStampedModel):
         return self.name
 
 
-# -------------------------------------------------------------------
-#  Bundle Option Item
-# -------------------------------------------------------------------
 class BundleOptionItem(TimeStampedModel):
     """
     Represents a selectable option available under bundle option groups.
     Example: add-ons like 'Expedited Delivery' or 'Premium Support'.
     """
+    FIELD_TYPES = [
+        ("text", "Text"),
+        # ("textarea", "Textarea"),
+        ("number", "Number"),
+        # ("email", "Email"),
+        # ("radio", "Radio"),
+        # ("select", "Select"),
+        ("checkbox", "Checkbox"),
 
+    ]
     identifier = models.CharField(max_length=100)
     label = models.CharField(max_length=255)
+    type = models.CharField(max_length=50, choices=FIELD_TYPES,blank=True,
+        null=True,)
+
+    name = models.CharField(max_length=255,blank=True,
+        null=True,)
     value = models.BooleanField(default=False)
+    text_val = models.CharField(max_length=255, null=True, blank=True)
+    num_val = models.PositiveIntegerField(null=True, blank=True)
     disabled = models.BooleanField(default=False)
     price_add = models.DecimalField(
         max_digits=10,
@@ -390,11 +403,6 @@ class BundleOptionItem(TimeStampedModel):
 
     def __str__(self):
         return f"{self.label} (+${self.price_add or 0})"
-    
-
-# -------------------------------------------------------------------
-#  Bundle Option Group
-# -------------------------------------------------------------------
 
 class BundleOptionGroup(TimeStampedModel):
     """
@@ -436,20 +444,13 @@ class BundleOptionGroup(TimeStampedModel):
         return f"{self.type.title()} Group ({item_count} option{'s' if item_count != 1 else ''})"
 
 
-# -------------------------------------------------------------------
-#  Bundle
-# -------------------------------------------------------------------
 class Bundle(TimeStampedModel):
-    """
-    Represents an individual bundle (e.g., 'Deal Accelerator').
-    Each bundle can have multiple option groups (ManyToMany).
-    """
-
     group = models.ForeignKey(
         "BundleGroup",
         related_name="bundles",
         on_delete=models.CASCADE
     )
+
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     base_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -457,12 +458,18 @@ class Bundle(TimeStampedModel):
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
 
-    # ✅ Many-to-many relationship to option groups
     option_groups = models.ManyToManyField(
         "BundleOptionGroup",
         related_name="bundles",
-        blank=True,
-        help_text="Attach one or more option groups to this bundle."
+        blank=True
+    )
+
+    # ONE Bundle → ONE ModalForm
+    modal_form = models.OneToOneField(
+        "BundleModalForm",
+        related_name="bundle",
+        on_delete=models.SET_NULL,
+        null=True, blank=True
     )
 
     class Meta:
@@ -471,8 +478,58 @@ class Bundle(TimeStampedModel):
 
     def __str__(self):
         return f"{self.name} (${self.discounted_price})"
+    
+class BundleModalForm(TimeStampedModel):
+    """
+    Modal form for a specific Bundle.
+    Each bundle can have at most one modal form.
+    """
+    field = models.ManyToManyField(
+        "BundleModalField",
+        related_name="form",
+       null=True, blank=True
+    )
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"Modal Form - {self.title}"
 
 
+class BundleModalField(TimeStampedModel):
+    FIELD_TYPES = [
+        ("text", "Text"),
+        ("textarea", "Textarea"),
+        ("number", "Number"),
+        ("email", "Email"),
+        ("radio", "Radio"),
+        ("select", "Select"),
+        ("checkbox", "Checkbox"),
+        ("date", "Date"),
+    ]
+
+
+
+    label = models.CharField(max_length=255)
+    name = models.CharField(max_length=255)
+    type = models.CharField(max_length=50, choices=FIELD_TYPES, default="text")
+
+    required = models.BooleanField(default=False)
+    value = models.CharField(max_length=255, blank=True, null=True, verbose_name="Default value")
+
+    placeholder = models.CharField(max_length=255, blank=True, null=True)
+    help_text = models.CharField(max_length=255, blank=True, null=True)
+
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+
+
+    def __str__(self):
+        return f"{self.label} ({self.type})"
 
 # -------------------------------------------------------------------
 # Top-level Category

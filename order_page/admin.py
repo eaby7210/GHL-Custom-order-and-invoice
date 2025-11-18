@@ -12,6 +12,8 @@ from .models import (
         Bundle,
         BundleOptionGroup,
         BundleOptionItem,
+        BundleModalForm,
+        BundleModalField,
 )
 from .forms import SubmenuItemForm
 from django.utils.html import format_html
@@ -89,38 +91,103 @@ class BundleOptionGroupAdmin(SortableAdminMixin, admin.ModelAdmin):
 # -------------------------------------------------------------------
 #  Bundle Admin
 # -------------------------------------------------------------------
+# @admin.register(Bundle)
+# class BundleAdmin(SortableAdminMixin, admin.ModelAdmin):
+#     list_display = (
+#         "name",
+#         "group",
+#         "base_price",
+#         "discounted_price",
+#         "is_active",
+#         "sort_order",
+#         "manage_option_groups",
+
+#     )
+#     list_filter = ("is_active", "group")
+#     search_fields = ("name", "description")
+#     ordering = ("group", "sort_order")
+#     filter_horizontal = ("option_groups",)
+
+#     def manage_option_groups(self, obj):
+#         """
+#         Adds quick 'edit' and 'add' buttons for option groups.
+#         """
+#         edit_links = ""
+#         if obj.option_groups.exists():
+#             edit_links = "<br>".join(
+#                 [
+#                     f'<a href="/admin/order_page/bundleoptiongroup/{g.id}/change/">✏️ {g}</a>'
+#                     for g in obj.option_groups.all()
+#                 ]
+#             )
+#         add_link = '<a class="button" href="/admin/order_page/bundleoptiongroup/add/">➕ Add Group</a>'
+#         return format_html(f"{edit_links}<br>{add_link}")
+#     manage_option_groups.short_description = "Option Groups"
+
+
 @admin.register(Bundle)
-class BundleAdmin(SortableAdminMixin, admin.ModelAdmin):
-    list_display = (
-        "name",
-        "group",
-        "base_price",
-        "discounted_price",
-        "is_active",
-        "sort_order",
-        "manage_option_groups",
-    )
-    list_filter = ("is_active", "group")
+class BundleAdmin(admin.ModelAdmin):
+    list_display = ("name", "group", "discounted_price", "is_active", "sort_order")
+    list_filter = ("group", "is_active")
     search_fields = ("name", "description")
     ordering = ("group", "sort_order")
+
     filter_horizontal = ("option_groups",)
 
-    def manage_option_groups(self, obj):
-        """
-        Adds quick 'edit' and 'add' buttons for option groups.
-        """
-        edit_links = ""
-        if obj.option_groups.exists():
-            edit_links = "<br>".join(
-                [
-                    f'<a href="/admin/order_page/bundleoptiongroup/{g.id}/change/">✏️ {g}</a>'
-                    for g in obj.option_groups.all()
-                ]
-            )
-        add_link = '<a class="button" href="/admin/order_page/bundleoptiongroup/add/">➕ Add Group</a>'
-        return format_html(f"{edit_links}<br>{add_link}")
-    manage_option_groups.short_description = "Option Groups"
+    fieldsets = (
+        ("Bundle Info", {
+            "fields": ("group", "name", "description", "is_active", "sort_order")
+        }),
+        ("Pricing", {
+            "fields": ("base_price", "discounted_price")
+        }),
+        ("Option Groups", {
+            "fields": ("option_groups",)
+        }),
+        ("Modal Form", {
+            "fields": ("modal_form",)   # ✔ allowed because OneToOneField
+        }),
+    )
 
+
+@admin.register(BundleModalForm)
+class BundleModalFormAdmin(admin.ModelAdmin):
+    list_display = ("title", "is_active")
+    search_fields = ("title",)
+    list_filter = ("is_active",)
+
+    filter_horizontal = ("field",)   # ✔ multi-select for modal fields
+
+    fieldsets = (
+        ("Modal Details", {
+            "fields": ("title", "description", "is_active")
+        }),
+        ("Fields", {
+            "fields": ("field",)     # ✔ this is allowed (M2M)
+        }),
+    )
+
+@admin.register(BundleModalField)
+class BundleModalFieldAdmin(admin.ModelAdmin):
+    list_display = ("label", "type", "required", "sort_order")
+    search_fields = ("label", "name")
+    list_filter = ("type", "required")
+    ordering = ("sort_order",)
+
+    fieldsets = (
+        ("Field Info", {
+            "fields": (
+                "label",
+                "name",
+                "type",
+                "required",
+                "value",
+                "placeholder",
+                "help_text",
+                "sort_order",
+            )
+        }),
+    )
 
 # -------------------------------------------------------------------
 #  Bundle Group Admin
