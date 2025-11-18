@@ -53,7 +53,7 @@ else:
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', '37d5165a4f2b.ngrok-free.app']
+ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost:5173', '37d5165a4f2b.ngrok-free.app']
 
 CORS_ALLOWED_ORIGINS = ['http://localhost:3000','http://localhost:5173','https://go.investorbootz.com']
 
@@ -96,6 +96,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.csrf_response_middleware.CsrfInjectMiddleware'
 ]
 
 ROOT_URLCONF = 'dj_IBstripe.urls'
