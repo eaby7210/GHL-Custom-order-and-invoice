@@ -14,7 +14,9 @@ from .models import (
     ModalOption,
     Disclosure,
     ServiceVariance,
-    BundleOptionGroup, BundleOptionItem
+    BundleOptionGroup, BundleOptionItem,
+    BundleModalField,
+    BundleModalForm
     
     )
 
@@ -25,24 +27,66 @@ class TermsOfConditionsSerializer(serializers.ModelSerializer):
 
 
 
+class BundleModalFieldSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BundleModalField
+        fields = [
+            "label",
+            "name",
+            "type",
+            "required",
+            "value",
+            "placeholder",
+            "help_text",
+            "sort_order",
+        ]
+        
+class BundleModalFormSerializer(serializers.ModelSerializer):
+    fields = BundleModalFieldSerializer(source="field", many=True, read_only=True) #type:ignore
+
+    class Meta:
+        model = BundleModalForm
+        fields = [
+            "title",
+            "description",
+            "is_active",
+            "fields",
+        ]
 
 # -------------------------------------------------------------------
 #  Bundle Option Item Serializer
 # -------------------------------------------------------------------
 class BundleOptionItemSerializer(serializers.ModelSerializer):
-    """
-    Serializer for individual option items within a bundle option group.
-    Maps fields for frontend-friendly naming.
-    """
     id = serializers.CharField(source="identifier")
     label = serializers.CharField()
-    value = serializers.BooleanField()
     disabled = serializers.BooleanField()
-    priceAdd = serializers.DecimalField(source="price_add", max_digits=10, decimal_places=2, required=False)
+    priceAdd = serializers.DecimalField(source="price_change", max_digits=10, decimal_places=2, required=False)
+
+    # dynamic value field
+    value = serializers.SerializerMethodField()
 
     class Meta:
         model = BundleOptionItem
-        fields = ["id", "label", "value", "disabled", "priceAdd"]
+        fields = ["id", "type", "label", "value", "disabled", "priceAdd"]
+
+    def get_value(self, obj):
+        """
+        Returns dynamic value depending on option type:
+        - checkbox/radio → boolean (obj.value)
+        - number → obj.num_val
+        - text → obj.text_val
+        """
+        if obj.type in ["checkbox", "radio"]:
+            return obj.value
+        
+        if obj.type == "number":
+            return obj.num_val
+        
+        if obj.type == "text":
+            return obj.text_val
+
+        # fallback
+        return obj.value
 
 
 # -------------------------------------------------------------------
@@ -58,7 +102,7 @@ class BundleOptionGroupSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BundleOptionGroup
-        fields = ["type", "minimumRequired", "items"]
+        fields = [ "minimumRequired", "items"]
 
 
 # -------------------------------------------------------------------
@@ -73,10 +117,11 @@ class BundleSerializer(serializers.ModelSerializer):
     basePrice = serializers.DecimalField(source="base_price", max_digits=10, decimal_places=2)
     price = serializers.DecimalField(source="discounted_price", max_digits=10, decimal_places=2)
     options = serializers.SerializerMethodField()
+    modalForm = BundleModalFormSerializer(source="modal_form", read_only=True)
 
     class Meta:
         model = Bundle
-        fields = ["name", "description", "basePrice", "price", "options"]
+        fields = ["name", "description", "basePrice", "price", "options",  "modalForm", ]
 
     def get_options(self, obj):
         """

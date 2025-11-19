@@ -373,7 +373,7 @@ class BundleOptionItem(TimeStampedModel):
         # ("textarea", "Textarea"),
         ("number", "Number"),
         # ("email", "Email"),
-        # ("radio", "Radio"),
+        ("radio", "Radio"),
         # ("select", "Select"),
         ("checkbox", "Checkbox"),
 
@@ -389,7 +389,7 @@ class BundleOptionItem(TimeStampedModel):
     text_val = models.CharField(max_length=255, null=True, blank=True)
     num_val = models.PositiveIntegerField(null=True, blank=True)
     disabled = models.BooleanField(default=False)
-    price_add = models.DecimalField(
+    price_change = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         blank=True,
@@ -402,25 +402,16 @@ class BundleOptionItem(TimeStampedModel):
         ordering = ["sort_order", "created_at"]
 
     def __str__(self):
-        return f"{self.label} (+${self.price_add or 0})"
+        return f"{self.label} (+${self.price_change or 0})"
 
 class BundleOptionGroup(TimeStampedModel):
     """
     Defines a reusable set of selectable options (checkbox, radio, etc.)
     linked to one or more Bundles.
     """
+    name = models.CharField(max_length=255,blank=True,
+        null=True,)
 
-
-    type = models.CharField(
-        max_length=50,
-        choices=[
-            ("checkbox", "Checkbox"),
-            ("radio", "Radio"),
-            ("dropdown", "Dropdown"),
-        ],
-        default="checkbox",
-        help_text="Type of option selection control."
-    )
     minimum_required = models.PositiveIntegerField(default=0)
 
 
@@ -441,7 +432,7 @@ class BundleOptionGroup(TimeStampedModel):
         Display the type and number of options for easy identification.
         """
         item_count = self.items.count()
-        return f"{self.type.title()} Group ({item_count} option{'s' if item_count != 1 else ''})"
+        return f"{self.name} Group ({item_count} option{'s' if item_count != 1 else ''})"
 
 
 class Bundle(TimeStampedModel):

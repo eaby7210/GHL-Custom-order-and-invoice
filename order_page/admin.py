@@ -41,7 +41,7 @@ class BundleOptionItemInline(admin.TabularInline):
 # -------------------------------------------------------------------
 @admin.register(BundleOptionItem)
 class BundleOptionItemAdmin(SortableAdminMixin, admin.ModelAdmin):
-    list_display = ("label", "price_add", "disabled", "sort_order", "view_groups")
+    list_display = ("label", "price_change", "disabled", "sort_order", "view_groups")
     search_fields = ("label", "identifier")
     list_editable = ("sort_order", "disabled")
     ordering = ("sort_order",)
@@ -63,7 +63,7 @@ class BundleOptionItemAdmin(SortableAdminMixin, admin.ModelAdmin):
 # -------------------------------------------------------------------
 @admin.register(BundleOptionGroup)
 class BundleOptionGroupAdmin(SortableAdminMixin, admin.ModelAdmin):
-    list_display = ("type", "minimum_required", "sort_order", "view_bundles", "manage_items")
+    list_display = ( "minimum_required", "sort_order", "view_bundles", "manage_items")
     search_fields = ("type",)
     list_editable = ("sort_order",)
     ordering = ("sort_order",)
