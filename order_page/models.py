@@ -869,6 +869,7 @@ class ModalOption(TimeStampedModel):
         help_text="Type of input field rendered in frontend."
     ) # text, email, number, etc.
     required = models.BooleanField(default=False)
+    value = models.CharField(max_length=255, blank=True, null=True, verbose_name="Default value")
     sort_order = models.PositiveIntegerField(default=0)
     valid_for_items = models.ManyToManyField(
         "FormItem",

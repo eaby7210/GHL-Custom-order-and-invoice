@@ -289,6 +289,7 @@ class ModalOptionSerializer(serializers.ModelSerializer):
             "label",
             "name",
             "type",
+            "value",
             "required",
             "valid_item_index",
         ]
