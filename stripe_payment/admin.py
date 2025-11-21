@@ -148,7 +148,7 @@ class NotaryUserAdmin(admin.ModelAdmin):
             )
         }),
         ('Account Status', {
-            'fields': ('disabled', 'type', 'active_status')
+            'fields': ('disabled', 'type', )
         }),
         ('Company & Roles', {
             'fields': (
