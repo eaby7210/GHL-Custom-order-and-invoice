@@ -300,7 +300,7 @@ class ModalOptionSerializer(serializers.ModelSerializer):
         If none are linked, return [] (applies to all).
         """
         items = obj.valid_for_items.values_list("identifier", flat=True)
-        return list(items) if items else []
+        return list(items) if items else None
 
         
 class ServiceFormSerializer(serializers.ModelSerializer):
