@@ -729,8 +729,8 @@ class OptionItem(TimeStampedModel):
         """
         linked_groups = list(self.groups.values_list("type", flat=True)) if hasattr(self, "groups") else [] #type:ignore
         if linked_groups:
-            return f"{self.label} ({', '.join([g.title() for g in linked_groups])})"
-        return f"{self.label} (Unlinked)"
+            return f"{self.label} {self.identifier}"
+        return f"{self.label} {self.identifier} (Unlinked)"
 
 
 # -------------------------------------------------------------------
