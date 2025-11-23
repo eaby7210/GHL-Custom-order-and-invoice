@@ -847,7 +847,7 @@ class SubmenuPriceChange(TimeStampedModel):
         ordering = ["form_item", "submenu_item"]
 
     def __str__(self):
-        return f"{self.form_item.identifier} → {self.submenu_item.identifier} ({self.change_type}: {self.value})" #type: ignore
+        return f"{self.form_item.identifier if self.form_item else "form item unliked"} → {self.submenu_item.identifier if self.submenu_item else "Submenu item unlinked"} ({self.change_type}: {self.value})" #type: ignore
 
 # -------------------------------------------------------------------
 # Modal Option (custom inline forms like “Lockbox code”)

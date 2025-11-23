@@ -209,6 +209,7 @@ class OptionItemSerializer(serializers.ModelSerializer):
             "label",
             "value",
             "disabled",
+            "name",
             "priceAdd",
             "priceChange",
             "valid_item_index",
