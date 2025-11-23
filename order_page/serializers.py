@@ -67,7 +67,7 @@ class BundleOptionItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BundleOptionItem
-        fields = ["id", "type", "label", "value", "disabled", "priceAdd"]
+        fields = ["id", "type", "label","name", "value", "disabled", "priceAdd"]
 
     def get_value(self, obj):
         """
@@ -209,7 +209,7 @@ class OptionItemSerializer(serializers.ModelSerializer):
             "label",
             "value",
             "disabled",
-            "name",
+           
             "priceAdd",
             "priceChange",
             "valid_item_index",
