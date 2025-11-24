@@ -183,7 +183,7 @@ class ALaCarteItem(models.Model):
             price=service_totals.get(service.service_id, {}).get("items",{}).get(data.get("id"),{}).get("discountedPrice",0),
             base_price=data.get("basePrice"),
             protection_invalid=data.get("protectionInvalid", False),
-            options_type=form_options.get("type", "none"),
+            options_type=form_options.get("type", "none") if form_options else None,
             minimum_required=form_options.get("minimumRequired", 0),
         )
 
