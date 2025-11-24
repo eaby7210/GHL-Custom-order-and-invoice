@@ -184,12 +184,13 @@ class ALaCarteItem(models.Model):
             base_price=data.get("basePrice"),
             protection_invalid=data.get("protectionInvalid", False),
             options_type=form_options.get("type", "none") if form_options else None,
-            minimum_required=form_options.get("minimumRequired", 0),
+            minimum_required=form_options.get("minimumRequired", 0) if form_options else 0,
         )
 
         # Create options if present
-        for opt in form_options.get("items", []):
-            ALaCarteOption.from_api(item, opt)
+        if form_options:
+            for opt in form_options.get("items", []):
+                ALaCarteOption.from_api(item, opt)
 
         # Create submenu if present (from parent form, not just item)
         if form_data:
