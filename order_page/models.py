@@ -909,3 +909,27 @@ class Disclosure(TimeStampedModel):
 
     def __str__(self):
         return f"{self.type.title()} disclosure for {self.service.title}"
+
+
+class DiscountLevel(TimeStampedModel):
+    """
+    Represents discount slabs like:
+    2 items → 20%
+    3 items → 30%
+    ...
+    """
+
+    items = models.PositiveIntegerField(help_text="Minimum items required")
+    percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        help_text="Percentage discount"
+    )
+    active_flag = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["items"]
+        unique_together = ("items", "percent")
+
+    def __str__(self):
+        return f"{self.items} items → {self.percent} {"Enabled" if self.active_flag else "Disabled"}%"

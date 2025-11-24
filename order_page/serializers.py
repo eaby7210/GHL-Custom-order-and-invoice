@@ -16,7 +16,8 @@ from .models import (
     ServiceVariance,
     BundleOptionGroup, BundleOptionItem,
     BundleModalField,
-    BundleModalForm
+    BundleModalForm,
+    DiscountLevel
     
     )
 
@@ -209,7 +210,6 @@ class OptionItemSerializer(serializers.ModelSerializer):
             "label",
             "value",
             "disabled",
-           
             "priceAdd",
             "priceChange",
             "valid_item_index",
@@ -370,6 +370,27 @@ class ServiceCategorySerializer(serializers.ModelSerializer):
         model = ServiceCategory
         fields = ["title", "description", "services"]
 
+class DiscountLevelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DiscountLevel
+        fields = [
+            "id",
+            "items",
+            "percent",
+            "active_flag",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate_items(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Items must be >= 1")
+        return value
+
+    def validate_percent(self, value):
+        if value <= 0 or value > 100:
+            raise serializers.ValidationError("Percent must be between 0 and 100")
+        return value
 
 class ServiceVarianceSerializer(serializers.ModelSerializer):
     """
@@ -383,6 +404,9 @@ class ServiceVarianceSerializer(serializers.ModelSerializer):
 
     # Optional: list of client IDs (or you can expand this to a full serializer later)
     clients = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    discount_levels = serializers.SerializerMethodField()
+
+
 
     class Meta:
         model = ServiceVariance
@@ -398,4 +422,10 @@ class ServiceVarianceSerializer(serializers.ModelSerializer):
             "clients",
             "created_at",
             "updated_at",
+            "discount_levels"
         ]
+    def get_discount_levels(self, obj):
+
+        qs = DiscountLevel.objects.filter(active_flag=True).order_by("items")
+        return DiscountLevelSerializer(qs, many=True).data
+        

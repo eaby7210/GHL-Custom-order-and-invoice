@@ -14,6 +14,7 @@ from .models import (
         BundleOptionItem,
         BundleModalForm,
         BundleModalField,
+        DiscountLevel
 )
 from .forms import SubmenuItemForm
 from django.utils.html import format_html
@@ -509,3 +510,52 @@ class ServiceCategoryAdmin(admin.ModelAdmin):
         }),
         ("Meta", {"fields": ("sort_order",)}),
     )
+
+
+@admin.register(DiscountLevel)
+class DiscountLevelAdmin(admin.ModelAdmin):
+
+    # Fields shown in list page
+    list_display = (
+        "items",
+        "percent",
+        "active_flag",
+        "created_at",
+        "updated_at",
+    )
+
+    # Make admin clean & usable
+    list_filter = ("active_flag", "created_at")
+    search_fields = ("items", "percent")
+    ordering = ("items",)
+
+    # Allow inline edit for active_flag & percent
+    list_editable = ("percent", "active_flag")
+
+    # Prevent accidental edits to system timestamps
+    readonly_fields = ("created_at", "updated_at")
+
+    # Add collapsible grouping
+    fieldsets = (
+        ("Discount Details", {
+            "fields": ("items", "percent", "active_flag"),
+        }),
+        ("System Information (Read-only)", {
+            "fields": ("created_at", "updated_at"),
+            "classes": ("collapse",),
+        }),
+    )
+
+    # Optional: allow bulk deactivate / activate
+    actions = ["activate_levels", "deactivate_levels"]
+
+    def activate_levels(self, request, queryset):
+        count = queryset.update(active_flag=True)
+        self.message_user(request, f"{count} discount levels activated.")
+
+    def deactivate_levels(self, request, queryset):
+        count = queryset.update(active_flag=False)
+        self.message_user(request, f"{count} discount levels deactivated.")
+
+    activate_levels.short_description = "Mark selected discount levels as active"
+    deactivate_levels.short_description = "Mark selected discount levels as inactive"
