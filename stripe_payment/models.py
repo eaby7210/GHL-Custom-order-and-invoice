@@ -165,7 +165,7 @@ class ALaCarteItem(models.Model):
         ("counter", "Counter"),
         ("none", "None"),
         ("mixed", "Mixed"),
-    ], default="none")
+    ], null=True, blank=True)
     minimum_required = models.IntegerField(default=0)
 
     def __str__(self):
