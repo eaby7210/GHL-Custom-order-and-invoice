@@ -381,6 +381,14 @@ class DiscountLevelSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+    
+    def to_representation(self, instance):
+        """
+        Convert Decimal percent → float
+        """
+        data = super().to_representation(instance)
+        data["percent"] = float(instance.percent)
+        return data
 
     def validate_items(self, value):
         if value < 1:
