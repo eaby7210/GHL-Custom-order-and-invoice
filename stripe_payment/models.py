@@ -4,6 +4,7 @@ import json
 
 
 
+
 class Order(models.Model):
     UNIT_TYPE_CHOICES = [
         ("single", "Single"),

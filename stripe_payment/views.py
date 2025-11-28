@@ -28,12 +28,11 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from django.utils.dateparse import parse_datetime
-from django.utils.timezone import make_aware, now
+from django.utils.timezone import make_aware, now, is_aware
 from django.template.loader import render_to_string
 import datetime
 from stripe_payment.models import NotaryClientCompany, NotaryUser
 import re
-from django.utils.timezone import now
 
 class FormSubmissionAPIView(APIView):
     def post(self, request):
@@ -88,7 +87,7 @@ class FormSubmissionAPIView(APIView):
         accepted_at = parse_datetime(data.get("acceptedAt")) if data.get("acceptedAt") else None
         tbd = data.get("tbd", False)
         preferred_datetime = parse_datetime(data.get("preferred_datetime")) if data.get("preferred_datetime") else None
-        if preferred_datetime is not None:
+        if preferred_datetime is not None and not is_aware(preferred_datetime):
             preferred_datetime = make_aware(preferred_datetime)
             
         # Create order (removed bundle_group and bundle_item fields)
@@ -389,8 +388,8 @@ def stripe_webhook(request):
     print(f"Stripe webhook received with payload length: {len(payload)}")
     print(f"Signature header present: {sig_header is not None}")
     
-    # endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
-    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
+    endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
+    # endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
     # print(f"Webhook secret configured: {bool(endpoint_secret)}")
     
     try:
@@ -856,6 +855,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
         }
     # "appt_time": formatted_datetime,
     if formatted_datetime!= "TBD":
+        print(formatted_datetime)
         notary_order['location']['appt_time'] = formatted_datetime
     if order.cosigner_first_name and order.cosigner_last_name:
         notary_order["cosigner"] = {
