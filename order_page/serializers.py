@@ -291,6 +291,8 @@ class ModalOptionSerializer(serializers.ModelSerializer):
             "name",
             "type",
             "value",
+            "footer_head",
+            "footer_body",
             "required",
             "valid_item_index",
         ]
