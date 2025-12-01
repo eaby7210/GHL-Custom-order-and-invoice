@@ -857,6 +857,8 @@ class ModalOption(TimeStampedModel):
     each_item = models.BooleanField(default=False)
     label = models.CharField(max_length=255)
     field_name = models.CharField(max_length=100)
+    footer_head= models.CharField(max_length=100, blank=True, null=True,)
+    footer_body = models.TextField( blank=True, null=True)
     field_type = models.CharField(
         max_length=50,
         choices=[
