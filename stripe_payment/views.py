@@ -71,9 +71,53 @@ class FormSubmissionAPIView(APIView):
                 if not owner_id:
                     print(f"Error on fetching Owner ID for company {company_id} response: {json.dumps(response, indent=4)} ")
                     return Response({"message":"Error on fetching Owner ID"},status=status.HTTP_400_BAD_REQUEST)
-                client = NotaryDashServices.get_client_one_user(company_id,user_id)
+                client = NotaryUser.objects.filter(id=user_id).first()
                 if not client:
-                    return Response({"message":"Error on fetching Client User"},status=status.HTTP_400_BAD_REQUEST)
+                    client_resp = NotaryDashServices.get_client_one_user(company_id, user_id)
+                    if not client_resp:
+                        return Response({"message": "Error on fetching Client User"}, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    u = client_resp.get("data") or {}
+                
+                    # Create new User entry
+                    client = NotaryUser.objects.create(
+                        id=u["id"],
+                        email=u.get("email"),
+                        email_unverified=u.get("email_unverified"),
+                        first_name=u.get("first_name", ""),
+                        last_name=u.get("last_name", ""),
+                        name=u.get("name", ""),
+                        photo_url=u.get("photo_url"),
+                        deleted_at=u.get("deleted_at"),
+                        last_login_at=u.get("last_login_at"),
+                        last_ip=u.get("last_ip"),
+                        last_company=NotaryClientCompany.objects.filter(id=company_id).first(),
+                        attr=u.get("attr", {}),
+                        disabled=u.get("disabled"),
+                        type=u.get("type") or "",
+                        country_code=u.get("country_code"),
+                        tz=u.get("tz"),
+                        created_at=u.get("created_at", now()),
+                        updated_at=u.get("updated_at", now()),
+                        has_roles=u.get("hasRoles", []),
+                        pivot_active=True,
+                        pivot_role_id=None,
+                        pivot_company=None,
+                        page_visited=True,
+                    )
+
+            # Update NotaryUser with latest TermsOfConditions
+            try:
+                from order_page.models import TermsOfConditions
+                latest_tos = TermsOfConditions.objects.order_by('-updated_at').first()
+                
+                if client and latest_tos:
+                    client.signed_terms.add(latest_tos)
+                    client.last_signed_at = now()
+                    client.save()
+                    print(f"Updated NotaryUser {user_id} with TermsOfConditions {latest_tos.id}")
+            except Exception as e:
+                print(f"Error updating TermsOfConditions for user {user_id}: {e}")
             
          
         postal_code = data.get("postalCode")
@@ -652,6 +696,8 @@ def handle_checkout_session_completed(event):
                 print(f"Contact creation failed with status {status}. Attempting to retrieve existing contact by ID: {contact_id}")
                 if contact_id:
                     contact_data = ContactServices.get_contact(token_obj.LocationId, contact_id)
+                    if contact_data:
+                        ContactServices.save_contact(contact_data)
                     contact_data["id"] = contact_id
                     # print(f"Contact creation conflicted with: {contact_data.get('id')} Using {json.dumps(contact_data, indent=4)}")
             ContactServices.save_contact(contact_data)
@@ -704,6 +750,8 @@ def handle_checkout_session_completed(event):
                 print(f"❌ Failed to update PaymentIntent metadata: {e}")
         else:
             print("⚠️ No payment_intent ID found in session")
+        from stripe_payment.tasks import process_tos_for_ghl
+        process_tos_for_ghl(order_obj.user_id,contact_data["id"])
     
     except Exception as e:
         print(f"ERROR in handle_checkout_session_completed: {str(e)}")
@@ -776,7 +824,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             "invoice_data":inv_data,
             "order":order
             }
-        )
+        ).replace("\n", "").replace('"', "'")
     order_html_content = render_to_string(
         "order_detail.html", 
         context={
@@ -784,7 +832,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
             "order":order,
             "transaction":transaction_details
             }
-    )
+    ).replace("\n", "").replace('"', "'")
     
 
     

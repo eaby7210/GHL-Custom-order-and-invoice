@@ -415,7 +415,8 @@ class NotaryUser(models.Model):
 
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
-
+    signed_terms = models.ManyToManyField("order_page.TermsOfConditions", related_name="users",blank=True, null=True)
+    last_signed_at = models.DateTimeField(null=True, blank=True)
     has_roles = models.JSONField(default=list, blank=True)
 
     # Pivot fields

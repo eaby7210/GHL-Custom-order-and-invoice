@@ -11,6 +11,7 @@ from stripe_payment.models import NotaryClientCompany
 
 
 class TermsOfConditions(models.Model):
+    version_id = models.CharField(max_length=20, unique=True, null=True, blank=True)
     title = models.CharField(max_length=200)
     body = models.TextField(help_text="Enter basic HTML content for terms of conditions (no JS).")
 
@@ -29,6 +30,13 @@ class TermsOfConditions(models.Model):
             if f"<{tag}" in self.body.lower():
                 raise ValidationError(f"Tag <{tag}> is not allowed.")
         super().clean()
+
+    def save(self, *args, **kwargs):
+        # Check if this is an update (pk exists)
+        if self.pk:
+            # Clear all users who have signed this term
+            self.users.clear()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.title

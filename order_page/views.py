@@ -19,6 +19,8 @@ from django.views.decorators.http import require_POST
 from django.utils.decorators import method_decorator
 from stripe_payment.services import NotaryDashServices
 from stripe_payment.models import NotaryClientCompany, NotaryUser
+
+
 class LatestTermsOfConditionsView(APIView):
     """
     Returns the latest Terms of Conditions (by updated_at).
@@ -29,6 +31,12 @@ class LatestTermsOfConditionsView(APIView):
         if not latest_tos:
             return Response({"detail": "No Terms of Conditions found."}, status=404)
         
+        user_id = request.query_params.get('user_id')
+        if user_id:
+            user = NotaryUser.objects.filter(id=user_id).first()
+            if user and user.signed_terms.filter(id=latest_tos.id).exists():
+                return Response({"signed": True})
+
         serializer = TermsOfConditionsSerializer(latest_tos)
         return Response(serializer.data)
 
