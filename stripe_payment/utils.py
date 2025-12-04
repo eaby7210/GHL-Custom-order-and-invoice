@@ -95,7 +95,7 @@ def create_stripe_session(order: Order, domain):
     total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
 
     # --- Add Order Protection  ---
-    if order.order_protection:
+    if order.order_protection and order.order_protection_price>0:
         print(order.order_protection_price, type(order.order_protection_price))
         line_items.append({
             "price_data": {
