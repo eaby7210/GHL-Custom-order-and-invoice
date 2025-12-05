@@ -1,6 +1,8 @@
 from django.db import models
 from decimal import Decimal
 import json
+from django.utils.dateparse import parse_datetime
+from django.utils.timezone import make_aware, is_aware
 
 
 
@@ -99,6 +101,83 @@ class Order(models.Model):
     order_protection_price =models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
+
+    @staticmethod
+    def from_api(data, coupon, owner_id, company_name, client_team_id):
+        postal_code = data.get("postalCode")
+        unit_type = data.get("unitType")
+        address = data.get("address")
+        
+        unit = data.get("unit")
+        service_type = data.get("serviceType")
+        occupancy_status = data.get("occupancy_status")
+
+        accepted_at = parse_datetime(data.get("acceptedAt")) if data.get("acceptedAt") else None
+        tbd = data.get("tbd", False)
+        preferred_datetime = parse_datetime(data.get("preferred_datetime")) if data.get("preferred_datetime") else None
+        if preferred_datetime is not None and not is_aware(preferred_datetime):
+            preferred_datetime = make_aware(preferred_datetime)
+            
+        return Order.objects.create(
+            unit_type=unit_type,
+            address=address,
+            state=data.get("state"),
+            city=data.get("city"),
+            postal_code=postal_code,
+            streetAddress = data.get("street"),
+            tbd=tbd,
+            unit=unit,
+            service_type=service_type,
+            accepted_at=accepted_at,
+            preferred_datetime=preferred_datetime,
+         
+            occupancy_vacant = occupancy_status == "vacant",
+            occupancy_occupied = occupancy_status == "occupied",
+            occupancy_status = occupancy_status,
+            access_lock_box=data.get("access_lock_box", False),
+            lock_box_code=data.get("lock_box_code"),
+            lock_box_location=data.get("lock_box_location"),
+            access_app_lock_box=data.get("access_app_lock_box", False),
+            access_meet_contact=data.get("access_meet_contact", False),
+            access_hidden_key=data.get("access_hidden_key", False),
+            hidden_key_directions=data.get("hidden_key_directions"),
+            access_community_access=data.get("access_community_access", False),
+            community_access_instructions=data.get("community_access_instructions"),
+            access_door_code=data.get("access_door_code", False),
+            door_code_value=data.get("door_code_value"),
+            contact_first_name_sched=data.get("contact_first_name_sched"),
+            contact_last_name_sched=data.get("contact_last_name_sched"),
+            contact_phone_sched_type=data.get("contact_phone_type_sched"),
+            contact_phone_sched=data.get("contact_phone_sched"),
+            contact_email_sched=data.get("contact_email_sched"),
+            
+            contact_first_name=data.get("contact_first_name"),
+            contact_last_name=data.get("contact_last_name"),
+            contact_phone_type=data.get("contact_phone_type"),
+            contact_phone=data.get("contact_phone"),
+            
+            cosigner_first_name=data.get("cosigner_first_name_sched"),
+            cosigner_last_name=data.get("cosigner_last_name_sched"),
+            cosigner_phone_type=data.get("cosigner_phone_type_sched"),
+            cosigner_phone=data.get("cosigner_phone_sched"),
+            
+            sp_instruction=data.get("special_instructions"),
+            
+            coupon_code=data.get("coupon_code"),
+            coupon_id=coupon.id if coupon else None,
+            coupon_percent = coupon.percent_off if coupon and coupon.percent_off else Decimal('0.00'),
+            coupon_fixed = coupon.amount_off if coupon and coupon.amount_off else Decimal('0.00'),
+            
+            company_id = data.get("company_id"),
+            user_id= data.get("user_id"),
+            owner_id=owner_id,
+            client_team_id = client_team_id,
+            
+            company_name=company_name,
+            total_price = data.get("a_la_carte_total") if service_type == "a_la_carte" else None,
+            order_protection= data.get("order_protection"),
+            order_protection_price = str(data.get("order_protection_price", '0.00'))
+        )
     
 class Bundle(models.Model):
     """Each bundle in an order"""
@@ -110,6 +189,17 @@ class Bundle(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.order.id})" #type:ignore
+
+    @staticmethod
+    def from_api(order, data):
+        bundle_price = Decimal(str(data.get("price", 0)))
+        return Bundle.objects.create(
+            order=order,
+            name=data.get("name"),
+            description=data.get("description"),
+            base_price=Decimal(str(data.get("basePrice", 0))),
+            price=bundle_price,
+        )
     
 class BundleOption(models.Model):
     bundle = models.ForeignKey(Bundle, on_delete=models.CASCADE, related_name="options")
@@ -121,6 +211,22 @@ class BundleOption(models.Model):
     def __str__(self):
         return f"{self.name} ({self.bundle.name})"
 
+    @staticmethod
+    def from_api(bundle, opt_id, opt_val, options_map):
+        if opt_val in [False, 0, "", None]:
+            return None
+        
+        opt_def = options_map.get(opt_id)
+        if opt_def:
+            price_add = opt_def.get("priceAdd")
+            return BundleOption.objects.create(
+                bundle=bundle,
+                name=opt_def.get("label"),
+                value=str(opt_val),
+                price=Decimal(str(price_add)) if price_add else Decimal("0.00")
+            )
+        return None
+
 class BundleModalOption(models.Model):
     bundle = models.ForeignKey(Bundle, on_delete=models.CASCADE, related_name="modal_options")
     name = models.CharField(max_length=255)
@@ -130,6 +236,21 @@ class BundleModalOption(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.bundle.name})"
+
+    @staticmethod
+    def from_api(bundle, field, bundle_forms_entry):
+        field_name = field.get("name")
+        field_label = field.get("label")
+        field_value = bundle_forms_entry.get(field_name)
+        
+        if field_value not in [None, ""]:
+            return BundleModalOption.objects.create(
+                bundle=bundle,
+                name=field_label,
+                value=str(field_value),
+                price=Decimal("0.00") 
+            )
+        return None
 
 
 class ALaCarteService(models.Model):
@@ -218,6 +339,18 @@ class ALaCarteItem(models.Model):
             for sub_item in submenu.get("items", []):
                 ALaCarteSubMenuItem.from_api(item, sub_item,form_data)
 
+            # Create modal options if present
+            modal_option = form_data.get("modalOption", {})
+            modal_form = modal_option.get("form", [])
+            for field in modal_form:
+                valid_items = field.get("valid_item_index")
+                
+                # Check if this option applies to the current item
+                if valid_items and data.get("id") not in valid_items:
+                    continue
+                
+                ALaCarteItemModalOption.from_api(item, field)
+
         return item
 
 
@@ -257,6 +390,8 @@ class ALaCarteSubMenuItem(models.Model):
 
     @classmethod
     def from_api(cls, item, data,form_data=None):
+        if data.get("type") == "radio" and bool(data.get("value"))==False:
+            return None
         return cls.objects.create(
             item=item,
             submenu_item_id=data.get("id"),
@@ -264,7 +399,25 @@ class ALaCarteSubMenuItem(models.Model):
             type=data.get("type", "counter"),
             value=data.get("value", 0),
         )
-        
+
+class ALaCarteItemModalOption(models.Model):
+    item = models.ForeignKey(ALaCarteItem, on_delete=models.CASCADE, related_name="modal_options")
+    name = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    value = models.CharField(max_length=255, null=True, blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"{self.name} ({self.item.title})"       
+
+    @classmethod
+    def from_api(cls, item, data):
+        return cls.objects.create(
+            item=item,
+            name=data.get("label"),
+            value=str(data.get("value")),
+            price=Decimal("0.00")
+        )
         
 class Coupon(models.Model):
     name = models.CharField(max_length=255, null=True, blank=True)  # Optional name for the coupon

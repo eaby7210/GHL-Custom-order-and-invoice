@@ -7,7 +7,7 @@ from rest_framework import status
 from stripe_payment.models import (
     Order, ALaCarteService,
     StripeCharge, CheckoutSession, NotaryClientCompany,
-    StripeWebhookEventLog, Bundle
+    StripeWebhookEventLog, Bundle, BundleOption, BundleModalOption
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -120,84 +120,8 @@ class FormSubmissionAPIView(APIView):
                 print(f"Error updating TermsOfConditions for user {user_id}: {e}")
             
          
-        postal_code = data.get("postalCode")
-        unit_type = data.get("unitType")
-        address = data.get("address")
-        
-        unit = data.get("unit")
         service_type = data.get("serviceType")
-        occupancy_status = data.get("occupancy_status")
-
-        accepted_at = parse_datetime(data.get("acceptedAt")) if data.get("acceptedAt") else None
-        tbd = data.get("tbd", False)
-        preferred_datetime = parse_datetime(data.get("preferred_datetime")) if data.get("preferred_datetime") else None
-        if preferred_datetime is not None and not is_aware(preferred_datetime):
-            preferred_datetime = make_aware(preferred_datetime)
-            
-        # Create order (removed bundle_group and bundle_item fields)
-        order = Order.objects.create(
-            unit_type=unit_type,
-            address=address,
-            state=state,
-            city=city,
-            postal_code=postal_code,
-            streetAddress = data.get("street"),
-            tbd=tbd,
-            unit=unit,
-            service_type=service_type,
-            accepted_at=accepted_at,
-            preferred_datetime=preferred_datetime,
-         
-            occupancy_vacant = occupancy_status == "vacant",
-            occupancy_occupied = occupancy_status == "occupied",
-            occupancy_status = occupancy_status,
-            access_lock_box=data.get("access_lock_box", False),
-            lock_box_code=data.get("lock_box_code"),
-            lock_box_location=data.get("lock_box_location"),
-            access_app_lock_box=data.get("access_app_lock_box", False),
-            access_meet_contact=data.get("access_meet_contact", False),
-            access_hidden_key=data.get("access_hidden_key", False),
-            hidden_key_directions=data.get("hidden_key_directions"),
-            access_community_access=data.get("access_community_access", False),
-            community_access_instructions=data.get("community_access_instructions"),
-            access_door_code=data.get("access_door_code", False),
-            door_code_value=data.get("door_code_value"),
-            contact_first_name_sched=data.get("contact_first_name_sched"),
-            contact_last_name_sched=data.get("contact_last_name_sched"),
-            contact_phone_sched_type=data.get("contact_phone_type_sched"),
-            contact_phone_sched=data.get("contact_phone_sched"),
-            contact_email_sched=data.get("contact_email_sched"),
-            
-            contact_first_name=data.get("contact_first_name"),
-            contact_last_name=data.get("contact_last_name"),
-            contact_phone_type=data.get("contact_phone_type"),
-            contact_phone=data.get("contact_phone"),
-            
-            cosigner_first_name=data.get("cosigner_first_name_sched"),
-            cosigner_last_name=data.get("cosigner_last_name_sched"),
-            cosigner_phone_type=data.get("cosigner_phone_type_sched"),
-            cosigner_phone=data.get("cosigner_phone_sched"),
-            # cosigner_email=data.get("cosigner_email"),
-            
-            sp_instruction=data.get("special_instructions"),
-            
-            coupon_code=coupon_code,
-            coupon_id=coupon.id if coupon else None,
-            coupon_percent = coupon.percent_off if coupon and coupon.percent_off else Decimal('0.00'),
-            coupon_fixed = coupon.amount_off if coupon and coupon.amount_off else Decimal('0.00'),
-            
-            company_id = company_id,
-            user_id= user_id,
-            owner_id=owner_id,
-            client_team_id = client_team_id,
-            
-            company_name=company_name,
-            # For bundled services, total_price will be calculated from bundle prices
-            # For a_la_carte, use the provided total
-            total_price = data.get("a_la_carte_total") if service_type == "a_la_carte" else None,
-            order_protection= data.get("order_protection"),
-            order_protection_price = str(data.get("order_protection_price", '0.00'))
-        )
+        order = Order.from_api(data, coupon, owner_id, company_name, client_team_id)
   
         #Save bundles
         bundles_data = data.get("bundles", [])
@@ -208,13 +132,27 @@ class FormSubmissionAPIView(APIView):
             bundle_price = Decimal(str(b.get("price", 0)))
             total_bundle_price += bundle_price
             
-            Bundle.objects.create(
-                order=order,
-                name=b.get("name"),
-                description=b.get("description"),
-                base_price=Decimal(str(b.get("basePrice", 0))),
-                price=bundle_price,
-            )
+            bundle_instance = Bundle.from_api(order, b)
+
+            # Handle Bundle Options
+            selected_options = b.get("selectedOptions", {})
+            options_def = b.get("options", {}).get("items", [])
+            # Create a map for easy lookup of option definitions by ID
+            options_map = {item["id"]: item for item in options_def}
+
+            for opt_id, opt_val in selected_options.items():
+                BundleOption.from_api(bundle_instance, opt_id, opt_val, options_map)
+
+            # Handle Bundle Modal Options
+            bundle_name = b.get("name")
+            modal_form = b.get("modalForm")
+            # Get the form data for this specific bundle from bundleForms
+            bundle_forms_entry = data.get("bundleForms", {}).get(bundle_name)
+
+            if modal_form and bundle_forms_entry:
+                fields = modal_form.get("fields", [])
+                for field in fields:
+                    BundleModalOption.from_api(bundle_instance, field, bundle_forms_entry)
         
         # Update order total_price for bundled services
         if service_type == "bundled" and total_bundle_price > 0:
@@ -1179,3 +1117,10 @@ class OrderRetrieveView(viewsets.GenericViewSet, mixins.RetrieveModelMixin):
     serializer_class = OrderSerializer
     lookup_field = "stripe_session_id"
 
+
+def test_email_template(request, order_id):
+    try:
+        order = Order.objects.get(id=order_id)
+        return render(request, "order_product_detail.html", {"order": order})
+    except Order.DoesNotExist:
+        return HttpResponse("Order not found", status=404)

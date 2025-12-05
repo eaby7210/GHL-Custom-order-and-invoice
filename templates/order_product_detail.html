@@ -1,19 +1,93 @@
+
 {% comment %} INVOICE FORMATTED CONTENT FOR WYSIWYG FIELD {% endcomment %}
 
 <p><strong>Product Items:</strong></p>
 <ul>
-  {% for item in invoice_data.items %}
+  {% for bundle in order.bundles.all %}
     <li>
-      <strong>{{ item.name }}</strong><br />
-      {% if item.description %}
-        <em>{{ item.description }}</em><br />
+      <strong>{{ bundle.name }}</strong><br />
+      {% if bundle.description %}
+        <em>{{ bundle.description }}</em><br />
       {% endif %}
-      Quantity: {{ item.qty }}<br />
-      {% comment %} Price: {{ item.amount }} {{ item.currency }} {% endcomment %}
+      
+      {% if bundle.options.all %}
+        <ul>
+        {% for option in bundle.options.all %}
+        {%if option.value == "True"%}
+        <li>{{ option.name }}</li>
+          {%else%}
+           <li>{{ option.name }}: {{ option.value }}</li>
+          {%endif%}
+        {% endfor %}
+        </ul>
+      {% endif %}
+
+      {% if bundle.modal_options.all %} 
+        <ul>
+        {% for modal_option in bundle.modal_options.all %}
+           <li>{{ modal_option.name }}: {{ modal_option.value }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
     </li>
-  {% empty %}
-    <li><em>No items added</em></li>
   {% endfor %}
+
+  {% for service in order.a_la_carte_services.all %}
+    <li>
+      <strong>{{ service.title }}</strong><br />
+      {% if service.subtitle %}
+        <em>{{ service.subtitle }}</em><br />
+      {% endif %}
+      
+      <ul>
+      {% for item in service.items.all %}
+        <li>
+          {{ item.title }}
+          
+          {% if item.options.all %}
+            <ul>
+            {% for option in item.options.all %}
+              {% if option.value %}
+                <li>{{ option.label }}</li>
+              {% endif %}
+            {% endfor %}
+            </ul>
+          {% endif %}
+
+          {% if item.submenu_items.all %}
+            <ul>
+            {% for sub_item in item.submenu_items.all %}
+            {% if sub_item.type == 'checkbox' or sub_item.type == 'radio' %}
+              <li>{{ sub_item.label }}</li> 
+            {% else %}
+               <li>{{ sub_item.label }}: {{ sub_item.value }}</li>
+            {% endif %}
+            {% endfor %}
+            </ul>
+          {% endif %}
+
+          {% if item.modal_options.all %} 
+            <ul>
+            {% for modal_option in item.modal_options.all %}
+               <li>{{ modal_option.name }}: {{ modal_option.value }}</li>
+            {% endfor %}
+            </ul>
+          {% endif %}
+        </li>
+      {% endfor %}
+      </ul>
+    </li>
+  {% endfor %}
+
+  {% if order.order_protection and order.order_protection_price > 0 %}
+    <li>
+      <strong>Order Protection</strong>
+    </li>
+  {% endif %}
+
+  {% if not order.bundles.all and not order.a_la_carte_services.all %}
+    <li><em>No items added</em></li>
+  {% endif %}
 </ul>
 
 
