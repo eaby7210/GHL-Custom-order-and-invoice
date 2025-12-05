@@ -111,7 +111,26 @@ class Bundle(models.Model):
     def __str__(self):
         return f"{self.name} ({self.order.id})" #type:ignore
     
-    
+class BundleOption(models.Model):
+    bundle = models.ForeignKey(Bundle, on_delete=models.CASCADE, related_name="options")
+    name = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    value = models.CharField(max_length=255, null=True, blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"{self.name} ({self.bundle.name})"
+
+class BundleModalOption(models.Model):
+    bundle = models.ForeignKey(Bundle, on_delete=models.CASCADE, related_name="modal_options")
+    name = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    value = models.CharField(max_length=255, null=True, blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"{self.name} ({self.bundle.name})"
+
 
 class ALaCarteService(models.Model):
     order = models.ForeignKey("Order", related_name="a_la_carte_services", on_delete=models.CASCADE)
