@@ -593,30 +593,30 @@ def stripe_webhook(request):
     #     evt_log.save()
     #     return HttpResponse(status=200)
 
-    elif event_type == 'checkout.session.completed':
-        print("=== Processing checkout.session.completed ===")
-        print(f"Session ID: {data_object.get('id')}")
-        print(f"Payment status: {data_object.get('payment_status')}")
-        print(f"Amount total: {data_object.get('amount_total')}")
+    # elif event_type == 'checkout.session.completed':
+    #     print("=== Processing checkout.session.completed ===")
+    #     print(f"Session ID: {data_object.get('id')}")
+    #     print(f"Payment status: {data_object.get('payment_status')}")
+    #     print(f"Amount total: {data_object.get('amount_total')}")
         
-        session_obj = handle_checkout_session_completed(event)
-        print(f"handle_checkout_session_completed returned: {session_obj is not None}")
+    #     session_obj = handle_checkout_session_completed(event)
+    #     print(f"handle_checkout_session_completed returned: {session_obj is not None}")
         
-        if not session_obj:
-            msg = "Failed to process CheckoutSession. Expiring session due to server error."
-            print(f"❌ {msg}")
-            evt_log.error_message = msg
-            evt_log.processed = True
-            evt_log.save()
+    #     if not session_obj:
+    #         msg = "Failed to process CheckoutSession. Expiring session due to server error."
+    #         print(f"❌ {msg}")
+    #         evt_log.error_message = msg
+    #         evt_log.processed = True
+    #         evt_log.save()
             
-            # Expire the session
-            try:
-                stripe.checkout.Session.expire(data_object.get("id"))
-                print("✅ Session expired successfully")
-            except Exception as e:
-                print(f"❌ Failed to expire session: {e}")
+    #         # Expire the session
+    #         try:
+    #             stripe.checkout.Session.expire(data_object.get("id"))
+    #             print("✅ Session expired successfully")
+    #         except Exception as e:
+    #             print(f"❌ Failed to expire session: {e}")
             
-            return HttpResponse(status=500)
+    #         return HttpResponse(status=500)
         else:
             print("✅ Session processed successfully, attempting to capture payment...")
             try:
@@ -640,6 +640,7 @@ def stripe_webhook(request):
                 return HttpResponse(status=500)
             
             return HttpResponse(status=200)
+    
     else:
         print(f"⚠️ Unhandled event type: {event_type}")
         return HttpResponse(status=200)
