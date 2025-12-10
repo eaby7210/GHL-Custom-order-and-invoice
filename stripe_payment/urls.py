@@ -5,7 +5,7 @@ from .views import (
     OrderRetrieveView, notary_view, stripe_coupon, test_email_template,
     OrderRetrieveView, notary_view, stripe_coupon, test_email_template,
     create_setup_intent, save_payment_method, set_default_card,
-    retrieve_invoice_by_payment_intent
+    retrieve_invoice_by_payment_intent, InvoiceView
 )
 
 router = DefaultRouter()
@@ -13,7 +13,7 @@ router.register(r'orders', OrderRetrieveView, basename='order')
 
 urlpatterns = [
     path("submit-order/", FormSubmissionAPIView.as_view(), name="submit-order"),
-    path("submit-order/<str:stripe_session_id>/", FormSubmissionAPIView.as_view(), name="submit-order-with-session"),
+    path("submit-order/<str:stripe_session_id>/", InvoiceView.as_view(), name="submit-order-with-session"),
     path("invoice/payment-intent/<str:payment_intent_id>/", retrieve_invoice_by_payment_intent, name="retrieve-invoice-by-pi"),
     path("stripe-webhook/", stripe_webhook, name="stripe-webhook"),
     path("notary-view/", notary_view, name="notary-view"),
