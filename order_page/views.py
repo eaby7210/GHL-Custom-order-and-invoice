@@ -7,7 +7,7 @@ from .models import (
     TermsOfConditions, TypeformResponse, TypeformParser, TypeformAnswer,
     ServiceVariance, NotaryClientCompany
     )
-
+from rest_framework.decorators import api_view
 from .serializers import TermsOfConditionsSerializer, ServiceVarianceSerializer
 from rest_framework import status
 import json
@@ -19,6 +19,7 @@ from django.views.decorators.http import require_POST
 from django.utils.decorators import method_decorator
 from stripe_payment.services import NotaryDashServices
 from stripe_payment.models import NotaryClientCompany, NotaryUser
+from stripe_payment.utils import create_stripe_customer
 
 
 class LatestTermsOfConditionsView(APIView):
@@ -124,36 +125,52 @@ class NotaryCreationView(APIView):
             "email_credentials": True,
         }
 
-        # 3️⃣ Create client in NotaryDash
-        client_response = NotaryDashServices.create_client(client_payload)
-        if not client_response:
-            return Response({"message": "Failed to create client"}, status=status.HTTP_400_BAD_REQUEST)
+        # 3️⃣ Create or Get client
+        company_name_key = client_payload.get("company_name")
+        client_obj = NotaryClientCompany.objects.filter(company_name=company_name_key).first()
 
-        client_data = client_response.get("data", {})
-        client_id = client_data.get("id")
+        if client_obj:
+            print(f"✅ Found existing NotaryClientCompany: {client_obj.company_name} (ID: {client_obj.id})")
+            client_id = client_obj.id
+        else:
+            # Create client in NotaryDash
+            client_response = NotaryDashServices.create_client(client_payload)
+            if not client_response:
+                return Response({"message": "Failed to create client"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not client_id:
-            return Response({"message": "No client ID returned"}, status=status.HTTP_400_BAD_REQUEST)
+            client_data = client_response.get("data", {})
+            client_id = client_data.get("id")
 
-        # ✅ Save NotaryClientCompany locally
-        client_obj, _ = NotaryClientCompany.objects.update_or_create(
-            id=client_id,
-            defaults={
-                "owner_id": client_data.get("owner_id"),
-                "parent_company_id": client_data.get("parent_company_id"),
-                "type": client_data.get("type"),
-                "company_name": client_data.get("company_name"),
-                "parent_company_name": client_data.get("parent_company_name"),
-                "attr": client_data.get("attr", {}),
-                "address": client_data.get("address", {}),
-                "deleted_at": client_data.get("deleted_at"),
-                "created_at": client_data.get("created_at"),
-                "updated_at": client_data.get("updated_at"),
-                "active": client_data.get("active", True),
-            }
-        )
+            if not client_id:
+                return Response({"message": "No client ID returned"}, status=status.HTTP_400_BAD_REQUEST)
 
-        print(f"✅ Saved NotaryClientCompany: {client_obj}")
+            # ✅ Save NotaryClientCompany locally
+            client_obj, _ = NotaryClientCompany.objects.update_or_create(
+                id=client_id,
+                defaults={
+                    "owner_id": client_data.get("owner_id"),
+                    "parent_company_id": client_data.get("parent_company_id"),
+                    "type": client_data.get("type"),
+                    "company_name": client_data.get("company_name"),
+                    "parent_company_name": client_data.get("parent_company_name"),
+                    "attr": client_data.get("attr", {}),
+                    "address": client_data.get("address", {}),
+                    "deleted_at": client_data.get("deleted_at"),
+                    "created_at": client_data.get("created_at"),
+                    "updated_at": client_data.get("updated_at"),
+                    "active": client_data.get("active", True),
+                }
+            )
+
+            print(f"✅ Saved NotaryClientCompany: {client_obj}")
+
+        # Create Stripe Customer if not exists
+        if not client_obj.stripe_customer_id:
+            stripe_customer = create_stripe_customer(client_obj.company_name, email=email)
+            if stripe_customer:
+                client_obj.stripe_customer_id = stripe_customer.id
+                client_obj.save()
+
 
         # 4️⃣ Create client user
         user_response = NotaryDashServices.create_client_user(
@@ -229,6 +246,11 @@ class ServiceLookupView(APIView):
                     )
 
             else:
+                if not company_id:
+                    return Response(
+                        {"detail": "Company ID is required."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 # Case 2: Try to find company-specific variance
                 client = get_object_or_404(NotaryClientCompany, id=company_id)
 
@@ -255,3 +277,5 @@ class ServiceLookupView(APIView):
             return Response(
                 {"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+

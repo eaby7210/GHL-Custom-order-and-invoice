@@ -11,14 +11,33 @@ import json
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-def create_stripe_session(order: Order, domain):
+def create_stripe_customer(company_name, email=None, metadata=None):
     """
-    Creates a Stripe Checkout Session for the given order.
-    `domain` should be something like 'https://yourfrontenddomain.com'
+    Creates a Stripe customer.
+    Allowed duplicates as per requirements.
+    """
+    try:
+        customer_data = {
+            "name": company_name,
+        }
+        if email:
+            customer_data["email"] = email
+        
+        if metadata:
+            customer_data["metadata"] = metadata
+
+        customer = stripe.Customer.create(**customer_data)
+        print(f"✅ Created Stripe Customer: {customer.id} for {company_name}")
+        return customer
+    except Exception as e:
+        print(f"❌ Error creating Stripe Customer: {e}")
+        return None
+
+def generate_order_line_items(order: Order):
+    """
+    Generates the line items list for an order, used for both Stripe Session and PaymentIntent metadata.
     """
     line_items = []
-
-
 
     bundles = order.bundles.all()
     if bundles.exists():
@@ -92,8 +111,7 @@ def create_stripe_session(order: Order, domain):
             },
             "quantity": 1,
         })
-    total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
-
+    
     # --- Add Order Protection  ---
     if order.order_protection and int(Decimal(order.order_protection_price))>0:
         print(order.order_protection_price, type(order.order_protection_price))
@@ -108,6 +126,16 @@ def create_stripe_session(order: Order, domain):
             },
             "quantity": 1,
         })
+        
+    return line_items
+
+def create_stripe_session(order: Order, domain):
+    """
+    Creates a Stripe Checkout Session for the given order.
+    `domain` should be something like 'https://yourfrontenddomain.com'
+    """
+    line_items = generate_order_line_items(order)
+    total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
 
     coupon_data = None
     if order.coupon_code:
@@ -206,3 +234,112 @@ def get_coupon(user_coupon_code)->stripe_coupon | None:
     except Exception as e:
         print(f"Error during coupon retrieval: {e}")
         return None
+
+def list_payment_methods(customer_id):
+    """
+    List card payment methods for a customer.
+    """
+    try:
+        methods = stripe.PaymentMethod.list(
+            customer=customer_id,
+            type="card"
+        )
+        return methods.data
+    except Exception as e:
+        print(f"Error listing payment methods: {e}")
+        return []
+
+def attach_payment_method(payment_method_id, customer_id):
+    """
+    Attach a payment method to a customer.
+    """
+    try:
+        stripe.PaymentMethod.attach(
+            payment_method_id,
+            customer=customer_id,
+        )
+        return True
+    except stripe.InvalidRequestError as e:
+        if "No such PaymentMethod" in str(e):
+             print(f"Payment method not found (possibly cross-account issue): {e}")
+             raise e
+        # If already attached, usually safer to ignore or log
+        print(f"Payment attachment warning: {e}")
+        return False
+    except Exception as e:
+        print(f"Error attaching payment method: {e}")
+        raise e
+
+def set_default_payment_method(customer_id, payment_method_id):
+    """
+    Set the default payment method for a customer's invoice settings.
+    """
+    try:
+        stripe.Customer.modify(
+            customer_id,
+            invoice_settings={"default_payment_method": payment_method_id}
+        )
+        return True
+    except Exception as e:
+        print(f"Error setting default payment method: {e}")
+        raise e
+
+def create_stripe_setup_intent(customer_id):
+    """
+    Creates a Stripe SetupIntent for saving a card correctly.
+    """
+    try:
+        intent = stripe.SetupIntent.create(
+            customer=customer_id,
+            payment_method_types=["card"],
+        )
+        return intent
+    except Exception as e:
+        print(f"Error creating setup intent: {e}")
+        return None
+
+        return None
+
+
+def create_payment_intent(amount, currency, customer_id, payment_method_id, metadata=None, order=None, frontend_domain=None):
+    """
+    Creates and confirms a PaymentIntent for a specific payment method (saved card).
+    If order is provided, generates line items summary for metadata.
+    """
+    final_metadata = metadata or {}
+    
+    if order:
+        line_items = generate_order_line_items(order)
+        # Format line items for metadata (Stripe limit 500 chars).
+        items_summary = []
+        for item in line_items:
+                p_data = item.get("price_data", {}).get("product_data", {})
+                name = p_data.get("name", "Unknown")
+                qty = item.get("quantity", 1)
+                items_summary.append(f"{qty}x {name}")
+        
+        items_str = ", ".join(items_summary)
+        if len(items_str) > 495:
+            items_str = items_str[:495] + "..."
+        
+        final_metadata["line_items"] = items_str
+        final_metadata["order_id"] = str(order.id) # Ensure order_id is present
+
+    intent = stripe.PaymentIntent.create(
+        amount=amount,
+        currency=currency,
+        customer=customer_id,
+        payment_method=payment_method_id,
+        off_session=True,
+        confirm=True,
+        capture_method='manual',
+        metadata=final_metadata
+    )
+    
+    # Determine Redirect URL
+    redirect_url = None
+    
+    if order and frontend_domain:
+            redirect_url = f"{frontend_domain}?status=success&payment_intent_id={intent.id}&client_id={order.user_id}"
+
+    return intent, redirect_url

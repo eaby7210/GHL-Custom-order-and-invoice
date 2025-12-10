@@ -1,4 +1,5 @@
 # views.py
+from dj_IBstripe.settings import STRIPE_PUBLISHABLE_KEY
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -18,7 +19,13 @@ from core.models import Contact, OAuthToken
 from django.utils.dateparse import parse_datetime
 from decimal import Decimal
 import json
-from .utils import create_stripe_session, get_coupon
+from .utils import (
+    create_stripe_customer, create_stripe_session, get_coupon_by_promo_code,
+    create_stripe_setup_intent,
+    create_payment_intent,
+    generate_order_line_items,
+    list_payment_methods,attach_payment_method
+)
 from .services import InvoiceServices, NotaryDashServices
 import stripe
 # from stripe.error import SignatureVerificationError
@@ -33,6 +40,7 @@ from django.template.loader import render_to_string
 import datetime
 from stripe_payment.models import NotaryClientCompany, NotaryUser
 import re
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 class FormSubmissionAPIView(APIView):
     def post(self, request):
@@ -185,11 +193,91 @@ class FormSubmissionAPIView(APIView):
         frontend_domain = request.headers.get("Origin") 
         print(f"Frontend domain: {frontend_domain}")
 
+        # Check for direct payment method
+        payment_method_id = data.get("payment_method")
+        
+        # If we have a saved card (starts with pm_) and company info
+        if payment_method_id and payment_method_id.startswith("pm_"):
+            try:
+                company = NotaryClientCompany.objects.get(id=company_id)
+                stripe_customer_id = company.stripe_customer_id
+                
+                if not stripe_customer_id:
+                     raise Exception("Company has no Stripe Customer ID")
+
+                amount_cents = int(float(order.total_price or 0) * 100)
+                
+                # Check order protection
+                if order.order_protection and int(Decimal(order.order_protection_price))>0:
+                     amount_cents += int(Decimal(order.order_protection_price)*100)
+
+                print(f"Attempting direct charge: {amount_cents} cents with {payment_method_id}")
+
+                intent, redirect_url = create_payment_intent(
+                    amount=amount_cents,
+                    currency="usd",
+                    customer_id=stripe_customer_id,
+                    payment_method_id=payment_method_id,
+                    metadata={
+                        "company_id": company.id,
+                        "user_id": user_id,
+                    },
+                    order=order,
+                    frontend_domain = frontend_domain
+                )
+                
+                status_code = status.HTTP_201_CREATED
+                intent_status = "failed"
+                client_secret = None
+
+                if intent:
+                    order.stripe_intent_id = intent.id
+                    intent_status = intent.status
+                    client_secret = intent.client_secret
+                    if intent.status == "succeeded":
+                        # We might want to mark order as paid or similar if we track that
+                        pass
+                    order.save()
+                else:
+                    # Intent creation failed (likely CardError), but we have a redirect_url (failure page)
+                    # We should decide if we return 201 (Order Created) or 400.
+                    # Since the order IS created in DB before this block, returning 201 seems appropriate if we want to redirect user to failure page.
+                    # Or we can return 200.
+                    pass
+                
+                return Response({
+                    "message": "Order processed",
+                    "order_id": order.id, 
+                    "status": intent_status,
+                    "client_secret": client_secret,
+                    "redirect_url": redirect_url
+                }, status=status_code)
+
+            except stripe.CardError as e:
+                print(f"Card Error: {e.user_message}")
+                return Response({
+                    "error": e.user_message,
+                    "order_id": order.id 
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            except Exception as e:
+                print(f"Direct payment failed: {e}")
+                import traceback
+                traceback.print_exc()
+                # Fallback or return error? User likely expects error if they selected a card and it failed.
+                return Response({
+                    "message": "Order created, but payment failed",
+                    "error": str(e),
+                    "order_id": order.id
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+
+        # Fallback to Checkout Session
         try:
             stripe_session = create_stripe_session(order, frontend_domain)
             order.stripe_session_id = stripe_session.id
-
             order.save()
+
             return Response({
                 "message": "Order created successfully",
                 "order_id": order.id, # type: ignore
@@ -202,6 +290,7 @@ class FormSubmissionAPIView(APIView):
                 "error": str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
     
+class InvoiceView(APIView):
     def get(self, request, stripe_session_id):
         try:
             token_obj = OAuthServices.get_valid_access_token_obj()
@@ -226,11 +315,44 @@ class FormSubmissionAPIView(APIView):
 
 
 @api_view(['GET'])
+def retrieve_invoice_by_payment_intent(request, payment_intent_id):
+    """
+    Retrieve invoice details using PaymentIntent ID.
+    Used for direct payment success page.
+    """
+    try:
+        # 1. Find the order
+        order = Order.objects.filter(stripe_intent_id=payment_intent_id).first()
+        if not order:
+             return Response({"error": "Order not found for this PaymentIntent"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # 2. Get OAuth token
+        token_obj = OAuthServices.get_valid_access_token_obj()
+        if not token_obj:
+            return Response({"error": "Authentication service unavailable"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        # 3. Retrieve invoice
+        if not order.invoice_id:
+             # Fallback check - maybe invoice creation failed or is pending?
+             return Response({"error": "Invoice not yet generated for this order"}, status=status.HTTP_404_NOT_FOUND)
+             
+        response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+
+        if not response:
+            return Response({"error": "Invoice not found in external system"}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(response, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        print(f"Error retrieving invoice by PI: {e}")
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
 def notary_view(request):
     company_id = request.query_params.get('company_id')
     user_id = request.query_params.get('user_id')
 
-    if not company_id or not user_id:
+    if not company_id and not user_id:
         return Response(
             {"error": "Company ID and User ID are required."},
             status=status.HTTP_400_BAD_REQUEST,
@@ -272,6 +394,15 @@ def notary_view(request):
         )
     else:
         owner_id = company.owner_id
+    
+    # Create Stripe Customer if not exists
+    if not company.stripe_customer_id:
+        # User email is not directly on company, but we can try to use the user's email if available or just omit it
+        stripe_customer = create_stripe_customer(company.company_name)
+        if stripe_customer:
+            company.stripe_customer_id = stripe_customer.id
+            company.save()
+
 
     # -----------------------------------------------------
     # 2️⃣  FETCH OR CREATE USER
@@ -326,9 +457,20 @@ def notary_view(request):
         else:
             first_visit = False
 
-    # -----------------------------------------------------
-    # 3️⃣  RETURN RESPONSE
-    # -----------------------------------------------------
+
+    payment_methods = []
+    if company.stripe_customer_id:
+        methods_data = list_payment_methods(company.stripe_customer_id)
+        for pm in methods_data:
+            payment_methods.append({
+                "id": pm.id,
+                "brand": pm.card.brand,
+                "last4": pm.card.last4,
+                "exp_month": pm.card.exp_month,
+                "exp_year": pm.card.exp_year,
+            })
+
+
     return Response(
         {
             "message": "Successfully fetched Notary Client",
@@ -336,6 +478,8 @@ def notary_view(request):
             "user_id": user_id,
             "owner_id": owner_id,
             "first_visit": first_visit,
+            "payment_methods": payment_methods,
+            "default_payment_method": company.stripe_default_payment_method if company.stripe_default_payment_method else 'checkout_session',
         },
         status=200,
     )
@@ -367,8 +511,8 @@ def stripe_webhook(request):
     
     payload = request.body
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', None)
-    print(f"Stripe webhook received with payload length: {len(payload)}")
-    print(f"Signature header present: {sig_header is not None}")
+    # print(f"Stripe webhook received with payload length: {len(payload)}")
+    # print(f"Signature header present: {sig_header is not None}")
     
     if settings.STRIPE_TEST:
         endpoint_secret = "whsec_f15e56f0881d7d269a0eed0131e76fe54a895bc712d81de8868f2e5388198683"
@@ -433,7 +577,22 @@ def stripe_webhook(request):
         print("Processing charge.updated...")
         handle_charge_updated(event)
         return HttpResponse(status=200)
+    
+    elif event_type == 'payment_intent.amount_capturable_updated':
+        print("---- Processing payment_intent.requires_action...")
+        handle_payment_intent_requires_action(event)
+        return HttpResponse(status=200) 
+
+    # elif event_type == 'payment_intent.succeeded':
+    #     print("Processing payment_intent.succeeded...")
+    #     handle_payment_intent_succeeded(event)
         
+    #     # Mark event log as processed if successful (or handled inside)
+    #     evt_log.error_message = "No errors"
+    #     evt_log.processed = True
+    #     evt_log.save()
+    #     return HttpResponse(status=200)
+
     elif event_type == 'checkout.session.completed':
         print("=== Processing checkout.session.completed ===")
         print(f"Session ID: {data_object.get('id')}")
@@ -483,8 +642,108 @@ def stripe_webhook(request):
             return HttpResponse(status=200)
     else:
         print(f"⚠️ Unhandled event type: {event_type}")
-        return HttpResponse(status=200)  # Changed from 500 to 200 for unhandled events
+        return HttpResponse(status=200)
+
+
+@api_view(['POST'])
+def create_setup_intent(request):
+    # company_id = request.data.get("company_id")
+
+    # company = NotaryClientCompany.objects.get(id=company_id)
+
+    # # Create Stripe Customer if missing
+    # if not company.stripe_customer_id:
+    #     customer =create_stripe_customer(company.company_name, metadata={"company_id": company.id})
+    #     company.stripe_customer_id = customer.id
+    #     company.save()
+
+    # # Create SetupIntent for adding card
+    # intent = create_stripe_setup_intent(company.stripe_customer_id)
     
+    # if not intent:
+    #     return Response({"error": "Failed to create setup intent"}, status=500)
+    STRIPE_PUBLISHABLE_KEY = settings.STRIPE_PUBLISHABLE_KEY
+
+    return Response({"publishable_key": STRIPE_PUBLISHABLE_KEY})
+
+@api_view(['POST'])
+def save_payment_method(request):
+    print(request.data)
+    company_id = request.data["company_id"]
+    payment_method = request.data["payment_method"]
+    set_default = request.data.get("set_default", False)
+
+    company = NotaryClientCompany.objects.get(id=company_id)
+
+    # Attach payment method to Stripe Customer
+    # This might raise an exception if not found, caught by Middleware or returns 500
+    attached = attach_payment_method(payment_method, company.stripe_customer_id)
+    
+    if not attached:
+        # If it failed but didn't convert to exception (e.g. already attached), we proceed. 
+        # But if it failed due to cross-account, attach_payment_method raises exception.
+        pass
+
+    # Make this the default card if requested
+    if set_default:
+        set_default_payment_method(company.stripe_customer_id, payment_method)
+        # Save to your DB
+        company.stripe_default_payment_method = payment_method
+        company.save()
+
+    # Fetch updated payment methods list
+    payment_methods = []
+    if company.stripe_customer_id:
+        methods_data = list_payment_methods(company.stripe_customer_id)
+        for pm in methods_data:
+            payment_methods.append({
+                "id": pm.id,
+                "brand": pm.card.brand,
+                "last4": pm.card.last4,
+                "exp_month": pm.card.exp_month,
+                "exp_year": pm.card.exp_year,
+            })
+
+    return Response({
+        "status": "success", 
+        "payment_methods": payment_methods,
+        "default_payment_method": company.stripe_default_payment_method
+    })
+
+
+@api_view(['POST'])
+def set_default_card(request):
+    company_id = request.data["company_id"]
+    payment_method = request.data["payment_method"]
+
+    company = NotaryClientCompany.objects.get(id=company_id)
+
+    if payment_method == "checkout_session":
+        # Clear default payment method on Stripe
+        try:
+            stripe.Customer.modify(
+                company.stripe_customer_id,
+                invoice_settings={"default_payment_method": None},
+            )
+        except Exception as e:
+            print(f"Error clearing default payment method: {e}")
+            return Response({"status": "error", "message": str(e)}, status=500)
+        
+        # Clear default in DB
+        company.stripe_default_payment_method = None
+    else:
+        # Make this the default card
+        set_default_payment_method(company.stripe_customer_id, payment_method)
+
+        # Save to your DB
+        company.stripe_default_payment_method = payment_method
+
+    company.save()
+
+    return Response({
+        "status": "success",
+        "default_payment_method": company.stripe_default_payment_method
+    })
 
 
 def format_phone_number(phone):
@@ -542,7 +801,25 @@ def handle_charge_updated(event):
     time.sleep(1)
     handle_charge_succeeded(event)
     # Optional: update metadata, receipt URL, etc.
-      
+
+def handle_payment_intent_requires_action(event):
+    try:
+        obj = event['data']['object']
+        payment_intent_id = obj["id"]
+        print(f"Payment Intent ID: {payment_intent_id}")
+        
+        order_obj = Order.objects.filter(stripe_intent_id=payment_intent_id).first()
+        print(f"Order found: {order_obj is not None}")
+        
+        if not order_obj:
+            print("ERROR: No order found with this payment intent ID")
+            return None
+        process_order(event,order_obj)
+        
+    except Exception as e:
+        print(f"Error in handle_payment_intent_requires_action: {e}")
+        return None
+
 def handle_checkout_session_completed(event):
     print("=== HANDLE_CHECKOUT_SESSION_COMPLETED STARTED ===")
     print(f"Event received: {event.get('type', 'Unknown')}")
@@ -562,7 +839,54 @@ def handle_checkout_session_completed(event):
         
         print(f"Order ID: {order_obj.id}, Company ID: {order_obj.company_id}, User ID: {order_obj.user_id}")
         
-        # contact_name = (order_obj.contact_first_name_sched + " " + order_obj.contact_last_name_sched) if order_obj.contact_first_name_sched and order_obj.contact_last_name_sched else ""
+        # Determine success of processing
+        processed_successfully = process_order(event, order_obj)
+        
+        if not processed_successfully:
+             print("ERROR: process_order failed in handle_checkout_session_completed")
+             return None
+
+        # Proceed to update Session object (keeping existing logic for session tracking)
+    
+    except Exception as e:
+        print(f"ERROR in handle_checkout_session_completed: {str(e)}")
+        print(f"Exception type: {type(e).__name__}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return None
+    
+    print("Creating/updating CheckoutSession...")
+    session_obj, created = CheckoutSession.objects.update_or_create(
+        session_id=obj["id"],
+        defaults={
+            "payment_intent": obj.get("payment_intent"),
+            "amount_subtotal": obj.get("amount_subtotal"),
+            "amount_total": obj.get("amount_total"),
+            "currency": obj.get("currency"),
+            "payment_status": obj.get("payment_status"),
+            "customer_email": obj.get("customer_details", {}).get("email"),
+            "customer_name": obj.get("customer_details", {}).get("name"),
+            "metadata": obj.get("metadata", {}),
+            "created": make_aware(datetime.datetime.fromtimestamp(obj["created"]))
+        }
+    )
+    
+    print(f"CheckoutSession {'created' if created else 'updated'}: {session_obj.session_id}")
+    print("=== HANDLE_CHECKOUT_SESSION_COMPLETED FINISHED ===")
+    
+    return session_obj
+
+def process_order(event,order_obj):
+    obj = event['data']['object']
+    
+    # Handle polymorphic event object (Session vs PaymentIntent)
+    if obj.get("object") == "checkout.session":
+        payment_intent_id = obj.get("payment_intent")
+    else:
+        # Assume it is a PaymentIntent or Charge where id is the PI/Charge ID
+        # For our usage, it is PaymentIntent
+        payment_intent_id = obj.get("id")
+    try:
         company_id = order_obj.company_id
         user_id = order_obj.user_id
         
@@ -645,7 +969,7 @@ def handle_checkout_session_completed(event):
         
         invoice_payload, notary_order = build_invoice_payload(
             order_obj, contact=contact_data, location_id=token_obj.LocationId,
-            session_obj=obj, client_user=client_user
+            event_obj=obj, client_user=client_user
         )
         
         print("=== BUILD_INVOICE_PAYLOAD COMPLETED ===")
@@ -684,6 +1008,15 @@ def handle_checkout_session_completed(event):
                 }
                 stripe.PaymentIntent.modify(payment_intent_id, metadata=new_metadata)
                 print(f"✅ Metadata updated for PaymentIntent {payment_intent_id}")
+                
+                 # Check status and capture if needed (Manual capture flow)
+                pi = stripe.PaymentIntent.retrieve(payment_intent_id)
+                if pi.status == "requires_capture":
+                    print(f"PaymentIntent {payment_intent_id} requires capture. Capturing now...")
+                    stripe.PaymentIntent.capture(payment_intent_id)
+                    print(f"✅ Payment captured successfully")
+                else:
+                    print(f"PaymentIntent status is {pi.status}, skipping capture.")
             except Exception as e:
                 print(f"❌ Failed to update PaymentIntent metadata: {e}")
         else:
@@ -698,28 +1031,9 @@ def handle_checkout_session_completed(event):
         print(f"Traceback: {traceback.format_exc()}")
         return None
     
-    print("Creating/updating CheckoutSession...")
-    session_obj, created = CheckoutSession.objects.update_or_create(
-        session_id=obj["id"],
-        defaults={
-            "payment_intent": obj.get("payment_intent"),
-            "amount_subtotal": obj.get("amount_subtotal"),
-            "amount_total": obj.get("amount_total"),
-            "currency": obj.get("currency"),
-            "payment_status": obj.get("payment_status"),
-            "customer_email": obj.get("customer_details", {}).get("email"),
-            "customer_name": obj.get("customer_details", {}).get("name"),
-            "metadata": obj.get("metadata", {}),
-            "created": make_aware(datetime.datetime.fromtimestamp(obj["created"]))
-        }
-    )
-    
-    print(f"CheckoutSession {'created' if created else 'updated'}: {session_obj.session_id}")
-    print("=== HANDLE_CHECKOUT_SESSION_COMPLETED FINISHED ===")
-    
-    return session_obj
 
-def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj):
+
+def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj):
     
     """
     Build Notary order payload based on given order and contact.
@@ -731,7 +1045,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     print(f"Order total_price: {order.total_price}")
     print(f"Product name: {prd_name}")
     print(f"Product name passed: {prd_name}")
-    # print(f"Session obj: {session_obj}")
+    # print(f"Event obj: {event_obj}")
     # print(f"Client user: {client_user}")
     print(f"Order occupancy_status: {getattr(order, 'occupancy_status', None)}")
     print(f"Order occupancy variables : occupied-{order.occupancy_occupied} vacant-{order.occupancy_vacant}")
@@ -741,14 +1055,15 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
     print(f"Order postalCode: {getattr(order, 'postalCode', None)}")
     print(f"Order contact_phone: {getattr(order, 'contact_phone', None)}")
 
-    
-    final_price = session_obj.amount_total/100 if session_obj else 0
+    # Handle polymorphic event_obj (Checkout Session or Payment Intent)
+    amount_cents = event_obj.get("amount_total") if event_obj.get("object") == "checkout.session" else event_obj.get("amount", 0)
+    final_price = amount_cents / 100 if amount_cents else 0
   
     company_id = order.company_id
     client_id = order.user_id
     client_team_id = order.client_team_id
     
-    payment_intent_id = session_obj.get("payment_intent")
+    payment_intent_id = event_obj.get("payment_intent") if event_obj.get("object") == "checkout.session" else event_obj.get("id")
     transaction_details = {
         "transaction_id": payment_intent_id,
     
@@ -830,7 +1145,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
                 "name": prd.get("name") if prd_response else prd_name,
                 "pay_to_notary": prd.get("pay_to_notary", 0) if prd_response else 0,
                 "charge_client": prd.get("charge_client", order.total_price) if prd_response else order.total_price,
-                "scanbacks_required": False
+                "scanbacks_required": True
             },
             "attr": {
                 # "lender": "possimus",
@@ -872,7 +1187,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user,session_obj
         print(f"=== BUILD NOTARY ORDER DEBUG END (FAILURE) ===")
         return None, None
         
-def build_invoice_payload(order: Order , contact, location_id, session_obj,client_user):
+def build_invoice_payload(order: Order , contact, location_id, event_obj, client_user):
     """
     Build JSON payload for invoice based on given order.
     """
@@ -881,7 +1196,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     print(f"Order service_type: {order.service_type}")
     print(f"Location ID: {location_id}")
     # print(f"Contact: {contact}")
-    # print(f"Session obj: {session_obj}")
+    print(f"Event obj: {json.dumps(event_obj, indent=2)}")
     # print(f"Client user: {client_user}")
 
     def build_item(name, description, price, currency="USD", qty=1):
@@ -905,7 +1220,11 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
 
     items = []
     notary_product_names = []
-    session_total_price = session_obj.amount_total/100 if session_obj else 0
+    
+    # Handle polymorphic event_obj
+    amount_cents = event_obj.get("amount_total") if event_obj.get("object") == "checkout.session" else event_obj.get("amount", 0)
+    session_total_price = amount_cents / 100 if amount_cents else 0
+    
     total_bundle_price = 0
     total_ala_price = 0
 
@@ -985,7 +1304,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     # 🧾 5. Compute combined totals
     combined_total = total_bundle_price + total_ala_price
     print(f"Bundle Total: {total_bundle_price}, ALC Total: {total_ala_price}, Combined: {combined_total}") 
-    if order.order_protection ==True:
+    if (order.order_protection ==True) and (int(Decimal(order.order_protection_price))>0):
         notary_product_names.append(" +Prt")
         items.append(build_item(
                     name="Order Protection",
@@ -1011,13 +1330,16 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     except:
         contact_ph = order.contact_phone_sched
     print(f"Formatted contact phone: {contact_ph}")
-    print(f"discount amount: {session_obj.total_details.amount_discount}")
+    total_details = event_obj.total_details if event_obj.object == "checkout.session" else event_obj.amount_details
+    # Safely get discount amount (support both object/dict and missing field)
+    discount_amount = total_details.get("amount_discount", 0) if total_details else 0
+    print(f"discount amount: {discount_amount}")
     
     print(f"Building invoice data structure...")
     invoice_data = {
         "altId": location_id,
         "altType": "location",
-        "name": f"{order.company_name} - {order.get_service_type_display() if order.service_type !="mixed" else "Bundle+A La Carte"} ",
+        "name": f"{order.company_name} - {order.get_service_type_display() if order.service_type !='mixed' else 'Bundle+A La Carte'} ",
         "businessDetails": {
      
             "name": order.company_name or "",
@@ -1030,7 +1352,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
         "currency": "USD",
         "items": items,
         "discount": {
-            "value": (float(session_obj.total_details.amount_discount)/100),
+            "value": (float(discount_amount)/100),
             "type": "fixed",
             # "validOnProductIds": "[ '6579751d56f60276e5bd4154' ]"
         },
@@ -1066,7 +1388,7 @@ def build_invoice_payload(order: Order , contact, location_id, session_obj,clien
     print(f"Initial invoice data created with invoiceNumber: {invoice_data['invoiceNumber']}")
     print(f"Calling build_notary_order with product names: {notary_product_names}")
     
-    invoice_data, notary_order = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names, client_user=client_user, session_obj=session_obj)
+    invoice_data, notary_order = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names, client_user=client_user, event_obj=event_obj)
     
     if invoice_data:
       

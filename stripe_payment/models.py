@@ -88,6 +88,8 @@ class Order(models.Model):
 
     # Stripe Relationship
     stripe_session_id = models.CharField(max_length=255, null=True, blank=True)
+    stripe_intent_id = models.CharField(max_length=255, null=True, blank=True)
+    
     location_id = models.CharField(max_length=50, null=True, blank=True)
     
     coupon_code = models.CharField(max_length=50, null=True, blank=True)
@@ -546,6 +548,10 @@ class NotaryClientCompany(models.Model):
     attr = models.JSONField(default=dict, null=True, blank=True)  # Stores dynamic keys like phone, accounting_email
 
     address = models.JSONField(default=dict, null=True, blank=True)
+
+    stripe_customer_id = models.CharField(max_length=255, null=True, blank=True)
+    stripe_default_payment_method = models.CharField(max_length=255, null=True, blank=True)
+
     deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
