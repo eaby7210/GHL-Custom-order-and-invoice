@@ -566,7 +566,7 @@ class NotaryUser(models.Model):
     id = models.BigIntegerField(primary_key=True)
     
     email = models.EmailField()
-    email_unverified = models.BooleanField(null=True, blank=True)
+    email_unverified = models.EmailField(null=True, blank=True)
     
     first_name = models.CharField(max_length=255)
     last_name = models.CharField(max_length=255)
