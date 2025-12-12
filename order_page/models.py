@@ -488,6 +488,12 @@ class BundleModalForm(TimeStampedModel):
         related_name="form",
        null=True, blank=True
     )
+    check_disclosure = models.ManyToManyField(
+        'CheckDiscloure',
+        related_name='modal_forms',
+        blank=True,
+        help_text="Select the disclosures to show in this "
+    )
 
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
@@ -867,6 +873,12 @@ class ModalOption(TimeStampedModel):
     field_name = models.CharField(max_length=100)
     footer_head= models.CharField(max_length=100, blank=True, null=True,)
     footer_body = models.TextField( blank=True, null=True)
+    check_disclosure = models.ManyToManyField(
+        'CheckDiscloure',
+        related_name='modal_options',
+        blank=True,
+        help_text="Select the disclosures this modal option only applies to (Leave it blank to applied in all disclosures)."
+    )
     field_type = models.CharField(
         max_length=50,
         choices=[
@@ -920,6 +932,21 @@ class Disclosure(TimeStampedModel):
     def __str__(self):
         return f"{self.type.title()} disclosure for {self.service.title}"
 
+class CheckDiscloure(TimeStampedModel):
+    """
+    Stores Checkbox input of disclousures
+    """
+    name = models.CharField(max_length=255)
+    required = models.BooleanField(default=False, help_text="Is this disclosure required?")
+    message = models.TextField(help_text="Disclosure or information message to show")
+    sort_order = models.PositiveIntegerField(default=0)
+    active_flag = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+
+    def __str__(self):
+        return self.name
 
 class DiscountLevel(TimeStampedModel):
     """

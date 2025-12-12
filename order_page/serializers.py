@@ -16,8 +16,9 @@ from .models import (
     ServiceVariance,
     BundleOptionGroup, BundleOptionItem,
     BundleModalField,
+
     BundleModalForm,
-    DiscountLevel
+    DiscountLevel, CheckDiscloure
     
     )
 
@@ -27,6 +28,16 @@ class TermsOfConditionsSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'body', 'created_at', 'updated_at']
 
 
+class CheckDiscloureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CheckDiscloure
+        fields = [
+            "name",
+            "required",
+            "message",
+            "sort_order",
+            "active_flag"
+        ]
 
 class BundleModalFieldSerializer(serializers.ModelSerializer):
     class Meta:
@@ -44,6 +55,7 @@ class BundleModalFieldSerializer(serializers.ModelSerializer):
         
 class BundleModalFormSerializer(serializers.ModelSerializer):
     fields = BundleModalFieldSerializer(source="field", many=True, read_only=True) #type:ignore
+    check_disclosure = CheckDiscloureSerializer(many=True, read_only=True)
 
     class Meta:
         model = BundleModalForm
@@ -52,6 +64,7 @@ class BundleModalFormSerializer(serializers.ModelSerializer):
             "description",
             "is_active",
             "fields",
+            "check_disclosure",
         ]
 
 # -------------------------------------------------------------------
@@ -283,6 +296,7 @@ class ModalOptionSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source="field_name")
     type = serializers.CharField(source="field_type")
     valid_item_index = serializers.SerializerMethodField()
+    check_disclosure = CheckDiscloureSerializer(many=True, read_only=True)
 
     class Meta:
         model = ModalOption
@@ -295,6 +309,7 @@ class ModalOptionSerializer(serializers.ModelSerializer):
             "footer_body",
             "required",
             "valid_item_index",
+            "check_disclosure",
         ]
 
     def get_valid_item_index(self, obj):

@@ -14,7 +14,7 @@ from .models import (
         BundleOptionItem,
         BundleModalForm,
         BundleModalField,
-        DiscountLevel
+        DiscountLevel, CheckDiscloure
 )
 from .forms import SubmenuItemForm
 from django.utils.html import format_html
@@ -165,6 +165,9 @@ class BundleModalFormAdmin(admin.ModelAdmin):
         }),
         ("Fields", {
             "fields": ("field",)     # ✔ this is allowed (M2M)
+        }),
+         ("Check Disclosures", {
+            "fields": ("check_disclosure",)     # ✔ this is allowed (M2M)
         }),
     )
 
@@ -559,3 +562,16 @@ class DiscountLevelAdmin(admin.ModelAdmin):
 
     activate_levels.short_description = "Mark selected discount levels as active"
     deactivate_levels.short_description = "Mark selected discount levels as inactive"
+
+@admin.register(CheckDiscloure)
+class CheckDiscloureAdmin(admin.ModelAdmin):
+    list_display = ("name", "required", "sort_order", "active_flag")
+    list_editable = ("sort_order", "active_flag", "required")
+    search_fields = ("name", "message")
+    list_filter = ("active_flag", "required")
+    ordering = ("sort_order",)
+    fieldsets = (
+        (None, {
+            "fields": ("name", "message", "required", "active_flag", "sort_order")
+        }),
+    )
