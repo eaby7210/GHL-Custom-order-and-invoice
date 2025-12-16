@@ -24,7 +24,8 @@ from .utils import (
     create_stripe_setup_intent,
     create_payment_intent,
     generate_order_line_items,
-    list_payment_methods,attach_payment_method
+    list_payment_methods,attach_payment_method,
+    set_default_payment_method
 )
 from .services import InvoiceServices, NotaryDashServices
 import stripe
@@ -197,9 +198,10 @@ class FormSubmissionAPIView(APIView):
         payment_method_id = data.get("payment_method")
         
         # If we have a saved card (starts with pm_) and company info
+        company = NotaryClientCompany.objects.get(id=company_id)
         if payment_method_id and payment_method_id.startswith("pm_"):
             try:
-                company = NotaryClientCompany.objects.get(id=company_id)
+                
                 stripe_customer_id = company.stripe_customer_id
                 
                 if not stripe_customer_id:
@@ -273,8 +275,16 @@ class FormSubmissionAPIView(APIView):
 
 
         # Fallback to Checkout Session
+        # Fallback to Checkout Session
         try:
-            stripe_session = create_stripe_session(order, frontend_domain)
+            # Ensure Stripe Customer exists for Checkout Session too (to allow saving card)
+            if not company.stripe_customer_id:
+                stripe_customer = create_stripe_customer(company.company_name)
+                if stripe_customer:
+                    company.stripe_customer_id = stripe_customer.id
+                    company.save()
+            
+            stripe_session = create_stripe_session(order, frontend_domain, customer_id=company.stripe_customer_id)
             order.stripe_session_id = stripe_session.id
             order.save()
 
