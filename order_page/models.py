@@ -873,6 +873,7 @@ class ModalOption(TimeStampedModel):
     field_name = models.CharField(max_length=100)
     footer_head= models.CharField(max_length=100, blank=True, null=True,)
     footer_body = models.TextField( blank=True, null=True)
+    hidden = models.BooleanField(default=False)
     check_disclosure = models.ManyToManyField(
         'CheckDiscloure',
         related_name='modal_options',
