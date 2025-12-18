@@ -311,6 +311,7 @@ class InvoiceView(APIView):
             response["primary_contact_firstname"]= order.contact_first_name_sched
             response["primary_contact_lastname"] = order.contact_last_name_sched
             response["preferred_time"] = order.preferred_datetime
+            response["tbd"] = order.tbd
             response["preferred_timezone"] = order.preferred_timezone if order.preferred_timezone else None
 
             if not response:
