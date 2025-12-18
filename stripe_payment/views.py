@@ -311,7 +311,7 @@ class InvoiceView(APIView):
             response["primary_contact_firstname"]= order.contact_first_name_sched
             response["primary_contact_lastname"] = order.contact_last_name_sched
             response["preferred_time"] = order.preferred_datetime
-            response["preferred_timezone"] = order.preferred_timezone
+            response["preferred_timezone"] = order.preferred_timezone if order.preferred_timezone else None
 
             if not response:
                 return self._handle_response(request, {"error": "Invoice not found"}, status.HTTP_404_NOT_FOUND)

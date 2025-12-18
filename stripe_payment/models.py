@@ -56,6 +56,7 @@ class Order(models.Model):
 
     # Scheduling & Contact
     preferred_datetime = models.DateTimeField(null=True, blank=True)
+    preferred_timezone = models.CharField(max_length=50, null=True, blank=True)
     
     company_id = models.CharField(max_length=100,null=True, blank=True)
     user_id= models.CharField(max_length=100, null=True, blank=True)
