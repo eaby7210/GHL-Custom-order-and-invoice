@@ -306,6 +306,12 @@ class InvoiceView(APIView):
             token_obj = OAuthServices.get_valid_access_token_obj()
             order = Order.objects.get(stripe_session_id=stripe_session_id)
             response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+            if order.notary_order_id:
+                response["notary_order_id"]= order.notary_order_id
+            response["primary_contact_firstname"]= order.contact_first_name_sched
+            response["primary_contact_lastname"] = order.contact_last_name_sched
+            response["preferred_time"] = order.preferred_datetime
+            response["preferred_timezone"] = order.preferred_timezone
 
             if not response:
                 return self._handle_response(request, {"error": "Invoice not found"}, status.HTTP_404_NOT_FOUND)
@@ -1184,13 +1190,16 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
     
     ord_response = NotaryDashServices.create_order(notary_order)
     # print(f"Order creation response: {ord_response}")
-    
+
     if ord_response and ord_response.get("data"):
         order_id = str(ord_response.get("data", {}).get("id"))
+        order_id_num = str(ord_response.get("data", {}).get("order_id"))
+        order.notary_order_id = order_id_num
         print(f"SUCCESS: Notary order created with ID: {order_id}")
         inv_data["invoiceNumber"] = order_id
         print(f"Updated inv_data with invoiceNumber: {order_id}")
         print(f"=== BUILD NOTARY ORDER DEBUG END (SUCCESS) ===")
+        order.save()
         return inv_data, ord_response
     else:
         print(f"ERROR: Notary order creation failed")

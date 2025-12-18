@@ -61,6 +61,7 @@ class Order(models.Model):
     user_id= models.CharField(max_length=100, null=True, blank=True)
     owner_id= models.CharField(max_length=100, null=True, blank=True)
     client_team_id = models.CharField(max_length=100, null=True, blank=True)
+    notary_order_id = models.CharField(max_length=100, null=True, blank=True)
     
     contact_first_name_sched = models.CharField(max_length=100,null=True, blank=True)
     contact_last_name_sched = models.CharField(max_length=100,null=True, blank=True)
