@@ -73,6 +73,17 @@
             {% endfor %}
             </ul>
           {% endif %}
+        {% if item.disclosures.all %}
+            <br/>
+            Agreed Disclosures:
+            <ul>
+            {% for disclosure in item.disclosures.all %}
+               {% if disclosure.value %}
+               <li>{{ disclosure.name }}</li>
+               {% endif %}
+            {% endfor %}
+            </ul>
+          {% endif %}
         </li>
       {% endfor %}
       </ul>

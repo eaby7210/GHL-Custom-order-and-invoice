@@ -8,7 +8,8 @@ from rest_framework import status
 from stripe_payment.models import (
     Order, ALaCarteService,
     StripeCharge, CheckoutSession, NotaryClientCompany,
-    StripeWebhookEventLog, Bundle, BundleOption, BundleModalOption
+    StripeWebhookEventLog, Bundle, BundleOption, BundleModalOption,
+    ALaCarteItem, ALaCarteItemDisclosure
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -179,6 +180,8 @@ class FormSubmissionAPIView(APIView):
             
             for svc_id, svc_total in (data.get("serviceTotals") or {}).items():
                 total_ala_price += Decimal(svc_total.get("subtotal", 0))
+            
+
 
         if bundles_data and a_la_carte_data:
             order.service_type = "mixed"

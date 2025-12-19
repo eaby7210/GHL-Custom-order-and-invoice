@@ -278,6 +278,8 @@ class ALaCarteService(models.Model):
         Create a service and its related items/options/submenu from API payload.
         """
         a_la_carte_order = recieved_data.get("a_la_carteOrder",[])
+        disclosures = recieved_data.get("disclosures", [])
+
         for data in a_la_carte_order:
             service = cls.objects.create(
                 order=order,
@@ -289,7 +291,7 @@ class ALaCarteService(models.Model):
             )
 
             for item_data in data.get("form", {}).get("items", []):
-                ALaCarteItem.from_api(service, item_data, data.get("form", {}), recieved_data.get("serviceTotals",{}))
+                ALaCarteItem.from_api(service, item_data, data.get("form", {}), recieved_data.get("serviceTotals",{}), disclosures)
 
         return order
 
@@ -317,7 +319,7 @@ class ALaCarteItem(models.Model):
         return f"{self.title} ({self.service.title})"
 
     @classmethod
-    def from_api(cls, service, data, form_data=None, service_totals=None):
+    def from_api(cls, service, data, form_data=None, service_totals=None, disclosures=None):
         print(f"Service Totals {json.dumps(service_totals.get(service.service_id, {}).get("items",{}).get(data.get("id"),{}), indent=4)}")
         form_options = data.get("options", {})
         item = cls.objects.create(
@@ -354,6 +356,12 @@ class ALaCarteItem(models.Model):
                     continue
                 
                 ALaCarteItemModalOption.from_api(item, field)
+
+        # Handle Disclosures
+        if disclosures:
+            for d_data in disclosures:
+                if d_data.get("itemId") == item.item_id:
+                    ALaCarteItemDisclosure.from_api(item, d_data)
 
         return item
 
@@ -423,6 +431,24 @@ class ALaCarteItemModalOption(models.Model):
             price=Decimal("0.00")
         )
         
+class ALaCarteItemDisclosure(models.Model):
+    item = models.ForeignKey(ALaCarteItem, related_name="disclosures", on_delete=models.CASCADE)
+    name = models.CharField(max_length=255)
+    value = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"{self.name} - {self.value}"
+
+    @classmethod
+    def from_api(cls, item, disclosure_data):
+        if disclosure_data.get("value") is True:
+             return cls.objects.create(
+                item=item,
+                name=disclosure_data.get("name"),
+                value=disclosure_data.get("value")
+            )
+        return None
+
 class Coupon(models.Model):
     name = models.CharField(max_length=255, null=True, blank=True)  # Optional name for the coupon
     code = models.CharField(max_length=100, unique=True)  # user-facing code (id from Stripe)
