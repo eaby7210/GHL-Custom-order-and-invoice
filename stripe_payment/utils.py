@@ -188,13 +188,31 @@ def get_coupon_by_promo_code(code)-> stripe_coupon |None:
     """
     try:
         promo_codes : ListObject["PromotionCode"] = stripe.PromotionCode.list(code=code, limit=1)
+        print(f"Promotion code: {promo_codes}")
         # print(f"promocode {json.dumps(promo_codes, indent=4)}")
         if promo_codes.data:
             promo = promo_codes.data[0]
             if not promo.active:
                 return None
-            coupon = promo.coupon
-            return coupon if coupon and coupon.valid else None
+            
+            # Extract coupon ID based on observed output structure (promotion.coupon)
+            # or standard structure (coupon.id)
+            coupon_id = None
+            
+            if hasattr(promo, 'promotion') and hasattr(promo.promotion, 'coupon'):
+                 coupon_id = promo.promotion.coupon
+            elif hasattr(promo, 'coupon'):
+                 if hasattr(promo.coupon, 'id'):
+                     coupon_id = promo.coupon.id
+                 else:
+                     coupon_id = promo.coupon # Assuming string ID if not expanded object
+
+            if coupon_id:
+                # Retrieve the full coupon object to ensure we have all fields and validity
+                coupon = stripe_coupon.retrieve(coupon_id)
+                return coupon if coupon and coupon.valid else None
+                
+            return None
         return None
     except stripe.StripeError as e:
         print(f"Stripe error while retrieving promotion code: {e}")
@@ -230,6 +248,7 @@ def get_coupon(user_coupon_code)->stripe_coupon | None:
     Syncs Stripe coupons to local DB, then retrieves the matched coupon.
     """
     try:
+        print(f"Retrieving coupon for code: {user_coupon_code}")
         coupon = get_coupon_by_promo_code(user_coupon_code.strip())
         if coupon:
             print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")

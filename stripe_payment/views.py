@@ -26,7 +26,7 @@ from .utils import (
     create_payment_intent,
     generate_order_line_items,
     list_payment_methods,attach_payment_method,
-    set_default_payment_method
+    set_default_payment_method, get_coupon
 )
 from .services import InvoiceServices, NotaryDashServices
 import stripe
@@ -511,11 +511,13 @@ def stripe_coupon(request, coupon_code):
     """
     if request.method == "GET":
         coupon = get_coupon(coupon_code)
+        print(json.dumps(coupon, indent=4))
         if coupon:
             return Response({
-                "id": coupon.id if coupon.id else coupon.stripe_coupon_id, #type: ignore
+                # "id": coupon.id if coupon.id else coupon.stripe_coupon_id, #type: ignore
                 "name": coupon.name if coupon.name else "No Name",
                 "percent_off": coupon.percent_off,
+                "amount_off": coupon.amount_off,
                 "valid": coupon.valid
                 
             }, status=status.HTTP_200_OK)
