@@ -115,12 +115,11 @@ class NotaryUserAdmin(admin.ModelAdmin):
         'full_name',
         'type',
         'last_company',
-        'disabled',
-        'email_unverified',
-        'pivot_active',
-        'last_login_at',
+        'is_admin',
         'created_at',
     ]
+
+    list_editable = ['is_admin']
 
     list_display_links = ['id', 'email']
 
