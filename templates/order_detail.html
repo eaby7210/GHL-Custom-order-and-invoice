@@ -29,7 +29,7 @@
 </p>
 
 {% if order.rescheduling_option %}
-  <p><strong>Rescheduling Preferences:</strong> {{ order.rescheduling_option|title|replace:"_"," " }}<br/>
+  <p><strong>Rescheduling Preferences:</strong> {{ order.rescheduling_option|title }}<br/>
     {% if order.contact_first_name_resched or order.contact_last_name_resched %}
         Contact: {{ order.contact_first_name_resched }} {{ order.contact_last_name_resched }}<br/>
     {% endif %}
