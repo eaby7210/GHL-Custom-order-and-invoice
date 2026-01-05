@@ -114,7 +114,7 @@ class NotaryUserAdmin(admin.ModelAdmin):
         'email',
         'full_name',
         'type',
-        'last_company',
+        'last_company_display',
         'is_admin',
         'created_at',
     ]
@@ -223,6 +223,14 @@ class NotaryUserAdmin(admin.ModelAdmin):
         return obj.name or '-'
     full_name.short_description = 'Full Name'
     full_name.admin_order_field = 'first_name'
+
+    def last_company_display(self, obj):
+        """Display company name with ID."""
+        if obj.last_company:
+            return f"{obj.last_company} ({obj.last_company.id})"
+        return '-'
+    last_company_display.short_description = 'Last Company'
+    last_company_display.admin_order_field = 'last_company'
 
     def active_status(self, obj):
         """Display active status based on deleted_at."""
