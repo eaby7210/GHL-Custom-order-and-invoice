@@ -1,11 +1,28 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import NotaryUser, NotaryClientCompany
+from .models import NotaryUser, NotaryClientCompany, NotaryCompanyGroup
 
 
 @admin.register(NotaryClientCompany)
 class NotaryClientCompanyAdmin(admin.ModelAdmin):
     """Admin config for NotaryClientCompany with search and filtering."""
+
+    class NotaryUserInline(admin.TabularInline):
+        model = NotaryUser
+        fields = ['email', 'full_name', 'is_admin', 'type']
+        readonly_fields = ['email', 'full_name', 'type']
+        extra = 0
+        show_change_link = True
+        can_delete = False
+        fk_name = 'last_company'
+
+        def full_name(self, obj):
+            if obj.first_name or obj.last_name:
+                return f"{obj.first_name} {obj.last_name}".strip()
+            return obj.name or '-'
+        full_name.short_description = 'Name'
+
+    inlines = [NotaryUserInline]
 
     list_display = [
         'id',
@@ -28,6 +45,7 @@ class NotaryClientCompanyAdmin(admin.ModelAdmin):
         'owner_id',
         'parent_company_id',
         'type',
+        'stripe_customer_id',
     ]
 
     list_filter = [
@@ -58,6 +76,10 @@ class NotaryClientCompanyAdmin(admin.ModelAdmin):
         }),
         ('Additional Data', {
             'fields': ('attr', 'address'),
+            'classes': ('collapse',)
+        }),
+        ('Payment Information', {
+            'fields': ('stripe_customer_id', 'stripe_default_payment_method'),
             'classes': ('collapse',)
         }),
         ('Timestamps', {
@@ -111,6 +133,7 @@ class NotaryUserAdmin(admin.ModelAdmin):
         'last_ip',
         'last_company__company_name',
         'pivot_company',
+        'stripe_customer_id',
     ]
 
     list_filter = [
@@ -124,6 +147,7 @@ class NotaryUserAdmin(admin.ModelAdmin):
         ('created_at', admin.DateFieldListFilter),
         ('updated_at', admin.DateFieldListFilter),
         'country_code',
+        'is_admin',
     ]
 
     readonly_fields = [
@@ -135,6 +159,7 @@ class NotaryUserAdmin(admin.ModelAdmin):
     ]
 
     raw_id_fields = ['last_company']
+    filter_horizontal = ['signed_terms']
 
     fieldsets = (
         ('Basic Information', {
@@ -148,7 +173,7 @@ class NotaryUserAdmin(admin.ModelAdmin):
             )
         }),
         ('Account Status', {
-            'fields': ('disabled', 'type', )
+            'fields': ('disabled', 'type', 'is_admin')
         }),
         ('Company & Roles', {
             'fields': (
@@ -169,6 +194,14 @@ class NotaryUserAdmin(admin.ModelAdmin):
         }),
         ('Additional Data', {
             'fields': ('attr',),
+            'classes': ('collapse',)
+        }),
+        ('Payment Information', {
+            'fields': ('stripe_customer_id', 'stripe_default_payment_method'),
+            'classes': ('collapse',)
+        }),
+        ('Terms & Legal', {
+            'fields': ('signed_terms', 'last_signed_at'),
             'classes': ('collapse',)
         }),
         ('Timestamps', {
@@ -205,3 +238,17 @@ class NotaryUserAdmin(admin.ModelAdmin):
         """Optimize queryset with select_related for foreign keys."""
         qs = super().get_queryset(request)
         return qs.select_related('last_company')
+
+
+@admin.register(NotaryCompanyGroup)
+class NotaryCompanyGroupAdmin(admin.ModelAdmin):
+    """Admin config for NotaryCompanyGroup."""
+    
+    list_display = ['id', 'name', 'company_count']
+    search_fields = ['name', 'companies__company_name']
+    filter_horizontal = ['companies']
+    
+    def company_count(self, obj):
+        return obj.companies.count()
+    company_count.short_description = 'Number of Companies'
+

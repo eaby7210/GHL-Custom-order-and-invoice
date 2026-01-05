@@ -107,8 +107,14 @@
 <p><strong> Occupancy Status: </strong>
   {% if order.occupancy_vacant %}
   Vacant
-  {% elif order.occupancy_occupied%}
-  Occupied
+  {% elif order.occupancy_occupied %}
+    {% if order.occupancy_status == "owner_occupied" %}
+      Owner Occupied
+    {% elif order.occupancy_status == "tenant_occupied" %}
+      Tenant Occupied
+    {% else %}
+      Occupied
+    {% endif %}
   {%else%}
     Not specified
   {%endif%}

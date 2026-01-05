@@ -143,11 +143,12 @@ def create_stripe_session(order: Order, domain, customer_id=None):
         if coupon:
             print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
             # Create discount object correctly
-            coupon_data = stripe.checkout.Session.CreateParamsDiscount(
+            # Create discount object correctly
+            coupon_data = {
                 # Use "promotion_code" if it's a customer-facing code
                 # Or use "coupon" if it's a direct coupon ID
-                coupon= coupon.id
-            )
+                "coupon": coupon.id
+            }
     
     session_params = {
         "payment_method_types": ["card", "link"],
@@ -155,7 +156,7 @@ def create_stripe_session(order: Order, domain, customer_id=None):
         "line_items": line_items,
         "success_url": f"{domain}?status=success&session_id={{CHECKOUT_SESSION_ID}}&client_id={order.user_id}",
         "cancel_url": f"{domain}?client_id={order.user_id}&company_id={order.company_id}&status=cancel",
-        "allow_promotion_codes": True,
+        
         "payment_intent_data": {
             "capture_method": "manual",
             "metadata": {
@@ -170,7 +171,12 @@ def create_stripe_session(order: Order, domain, customer_id=None):
                 "user_id": order.user_id,
             },
         }
+
     }
+    if coupon_data:
+        session_params["discounts"] = [coupon_data]
+    else:
+        session_params["allow_promotion_codes"] = True
 
     if customer_id:
         session_params["customer"] = customer_id

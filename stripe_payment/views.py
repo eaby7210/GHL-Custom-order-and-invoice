@@ -61,7 +61,7 @@ class FormSubmissionAPIView(APIView):
         if coupon_code:
             coupon:stripe.Coupon |None = get_coupon(coupon_code)
             if coupon:
-                print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
+                print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off or ${float(coupon.amount_off)/100} off")
             else:
                 print(f"Coupon not found or invalid: {coupon_code}")
         else:
@@ -132,6 +132,24 @@ class FormSubmissionAPIView(APIView):
          
         service_type = data.get("serviceType")
         order = Order.from_api(data, coupon, owner_id, company_name, client_team_id)
+        
+        if order.point_of_contact == "me":
+            order.contact_first_name_sched = client.first_name
+            order.contact_last_name_sched = client.last_name
+            order.contact_email_sched = client.email
+            order.contact_phone_sched = client.attr.get("phone")
+
+        # Handle Rescheduling Logic
+        if order.rescheduling_option == "contact_me":
+             order.contact_first_name_resched= client.first_name
+             order.contact_last_name_resched = client.last_name
+             order.contact_phone_resched = client.attr.get("phone")
+        elif order.rescheduling_option == "same_as_above":
+             order.contact_first_name_resched = order.contact_first_name_sched
+             order.contact_last_name_resched = order.contact_last_name_sched
+             order.contact_phone_resched = order.contact_phone_sched
+
+
   
         #Save bundles
         bundles_data = data.get("bundles", [])
@@ -215,6 +233,19 @@ class FormSubmissionAPIView(APIView):
                 # Check order protection
                 if order.order_protection and int(Decimal(order.order_protection_price))>0:
                      amount_cents += int(Decimal(order.order_protection_price)*100)
+
+                # Apply Coupon Discount
+                if coupon:
+                    discount_amount_cents = 0
+                    if coupon.percent_off:
+                        discount_amount_cents = int(amount_cents * (coupon.percent_off / 100))
+                    elif coupon.amount_off:
+                        discount_amount_cents = int(coupon.amount_off) # amount_off is usually in cents for Stripe coupons? Need to verify. 
+                        # Stripe API docs say amount_off is positive integer in smallest currency unit (e.g., 100 cents to off $1.00)
+                    
+                    amount_cents -= discount_amount_cents
+                    if amount_cents < 50: # Minimum charge for Stripe is usually around $0.50
+                        amount_cents = 50
 
                 print(f"Attempting direct charge: {amount_cents} cents with {payment_method_id}")
 
@@ -439,6 +470,9 @@ def notary_view(request):
 
         u = user_resp.get("data") or {}
 
+        # Check if this company has any users yet
+        is_first_user = not NotaryUser.objects.filter(last_company=company).exists()
+
         # Create new User entry
         user = NotaryUser.objects.create(
             id=u["id"],
@@ -464,6 +498,7 @@ def notary_view(request):
             pivot_role_id=None,
             pivot_company=None,
             page_visited=True,  # First time visit
+            is_admin=is_first_user,
         )
 
         first_visit = True
@@ -500,6 +535,14 @@ def notary_view(request):
             "first_visit": first_visit,
             "payment_methods": payment_methods,
             "default_payment_method": company.stripe_default_payment_method if company.stripe_default_payment_method else 'checkout_session',
+            "is_admin": user.is_admin,
+            "user_details": {
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "email": user.email,
+                "phone": user.attr.get("phone"),
+                "photo_url": user.photo_url,
+            }
         },
         status=200,
     )
@@ -1101,12 +1144,17 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
             "order":order
             }
         ).replace("\n", "").replace('"', "'")
+    order_status_emails_list = []
+    if order.order_status_emails:
+        order_status_emails_list = order.order_status_emails.split('\n')
+
     order_html_content = render_to_string(
         "order_detail.html", 
         context={
             "invoice_data":inv_data,
             "order":order,
-            "transaction":transaction_details
+            "transaction":transaction_details,
+            "order_status_emails_list": order_status_emails_list
             }
     ).replace("\n", "").replace('"', "'")
     

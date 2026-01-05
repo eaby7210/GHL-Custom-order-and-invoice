@@ -186,6 +186,9 @@ class NotaryCreationView(APIView):
         company_id = last_company_id if last_company_id else client_id
 
         if user_id:
+            # Check for existing users to determine admin status
+            is_first_user = not NotaryUser.objects.filter(last_company_id=company_id).exists()
+            
             # ✅ Save NotaryUser locally
             user_obj, _ = NotaryUser.objects.update_or_create(
                 id=user_id,
@@ -208,6 +211,15 @@ class NotaryCreationView(APIView):
                     "type": user_data.get("type"),
                 }
             )
+            
+            # Apply admin status if applicable and new logic dictates
+            # Note: We only force it to True if they are the first user. 
+            # If the user already existed and we are just updating, we usually preserve their status.
+            # However, if 'is_first_user' is True, it implies NO users existed before this point for this company.
+            if is_first_user:
+                user_obj.is_admin = True
+                user_obj.save()
+
 
             print(f"✅ Saved NotaryUser: {user_obj}")
 

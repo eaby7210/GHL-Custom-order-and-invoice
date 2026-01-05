@@ -1,3 +1,44 @@
+
+{# Occupancy & Access section #}
+<p><strong> Occupancy Status: </strong>
+  {% if order.occupancy_vacant %}
+  Vacant
+  {% elif order.occupancy_occupied %}
+    {% if order.occupancy_status == "owner_occupied" %}
+      Owner Occupied
+    {% elif order.occupancy_status == "tenant_occupied" %}
+      Tenant Occupied
+    {% else %}
+      Occupied
+    {% endif %}
+  {%else%}
+    Not specified
+  {%endif%}
+</p>
+
+{% if order.point_of_contact != "me" %}
+  <p><strong>Point Of Contact Type:</strong> {{ order.point_of_contact|title }}</p>
+{% endif %}
+
+<p><strong>Appointment Status:</strong> 
+  {% if order.appointment_confirmed %}
+    Confirmed
+  {% else %}
+    Not Confirmed
+  {% endif %}
+</p>
+
+{% if order.rescheduling_option %}
+  <p><strong>Rescheduling Preferences:</strong> {{ order.rescheduling_option|title|replace:"_"," " }}<br/>
+    {% if order.contact_first_name_resched or order.contact_last_name_resched %}
+        Contact: {{ order.contact_first_name_resched }} {{ order.contact_last_name_resched }}<br/>
+    {% endif %}
+    {% if order.contact_phone_resched %}
+        Phone: {{ order.contact_phone_resched }}
+    {% endif %}
+  </p>
+{% endif %}
+
 <p><strong>Access Options:</strong></p>
 <ul>
   {% if order.access_lock_box %}
@@ -48,4 +89,15 @@
   {{ invoice_data.termsNotes|safe }}
 {% endif %}
 
-<p><strong>Transaction ID:</strong/> {{transaction.transaction_id}}</p>
+<p><strong>Transaction ID:</strong> {{transaction.transaction_id}}</p>
+
+{% if order_status_emails_list %}
+  <p><strong>Order Status Updates (Participants):</strong></p>
+  <ul>
+    {% for email in order_status_emails_list %}
+      {% if email %}
+       <li>{{ email }}</li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+{% endif %}

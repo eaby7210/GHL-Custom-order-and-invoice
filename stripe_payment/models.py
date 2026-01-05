@@ -64,6 +64,7 @@ class Order(models.Model):
     client_team_id = models.CharField(max_length=100, null=True, blank=True)
     notary_order_id = models.CharField(max_length=100, null=True, blank=True)
     
+    point_of_contact = models.CharField(max_length=50, null=True, blank=True)
     contact_first_name_sched = models.CharField(max_length=100,null=True, blank=True)
     contact_last_name_sched = models.CharField(max_length=100,null=True, blank=True)
     contact_phone_sched_type = models.CharField(max_length=20, choices=PHONE_TYPE_CHOICES, null=True, blank=True)
@@ -105,6 +106,16 @@ class Order(models.Model):
     order_protection_price =models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
+    order_status_emails= models.CharField(max_length=255, null=True, blank=True)
+    order_status_emails= models.CharField(max_length=255, null=True, blank=True)
+    appointment_confirmed = models.BooleanField(default=False)
+    
+    # Rescheduling
+    rescheduling_option = models.CharField(max_length=50, null=True, blank=True) # same_as_above, contact_me, other
+    contact_first_name_resched = models.CharField(max_length=100, null=True, blank=True)
+    contact_last_name_resched = models.CharField(max_length=100, null=True, blank=True)
+    contact_phone_resched = models.CharField(max_length=20, null=True, blank=True)
+
 
     @staticmethod
     def from_api(data, coupon, owner_id, company_name, client_team_id):
@@ -136,7 +147,7 @@ class Order(models.Model):
             preferred_datetime=preferred_datetime,
          
             occupancy_vacant = occupancy_status == "vacant",
-            occupancy_occupied = occupancy_status == "occupied",
+            occupancy_occupied = occupancy_status in ["occupied", "owner_occupied", "tenant_occupied"],
             occupancy_status = occupancy_status,
             access_lock_box=data.get("access_lock_box", False),
             lock_box_code=data.get("lock_box_code"),
@@ -180,7 +191,15 @@ class Order(models.Model):
             company_name=company_name,
             total_price = data.get("a_la_carte_total") if service_type == "a_la_carte" else None,
             order_protection= data.get("order_protection"),
-            order_protection_price = str(data.get("order_protection_price", '0.00'))
+            order_protection_price = str(data.get("order_protection_price", '0.00')),
+            point_of_contact=data.get("point_of_contact"),
+            order_status_emails=data.get("order_status_emails"),
+            appointment_confirmed=data.get("appointment_confirmation") == "yes",
+            
+            rescheduling_option=data.get("rescheduling_option"),
+            contact_first_name_resched=data.get("contact_first_name_resched"),
+            contact_last_name_resched=data.get("contact_last_name_resched"),
+            contact_phone_resched=data.get("contact_phone_resched")
         )
     
 class Bundle(models.Model):
@@ -564,6 +583,9 @@ class Discount(models.Model):
     class Meta:
         db_table = 'discount'
 
+
+    
+
 class NotaryClientCompany(models.Model):
     id = models.BigIntegerField(primary_key=True)  # Matches NotaryDash ID
     owner_id = models.BigIntegerField()
@@ -624,6 +646,9 @@ class NotaryUser(models.Model):
     signed_terms = models.ManyToManyField("order_page.TermsOfConditions", related_name="users",blank=True, null=True)
     last_signed_at = models.DateTimeField(null=True, blank=True)
     has_roles = models.JSONField(default=list, blank=True)
+    is_admin = models.BooleanField(default=False)
+    stripe_customer_id = models.CharField(max_length=255, null=True, blank=True)
+    stripe_default_payment_method = models.CharField(max_length=255, null=True, blank=True)
 
     # Pivot fields
     pivot_active = models.BooleanField(default=True)
@@ -633,3 +658,7 @@ class NotaryUser(models.Model):
 
     def __str__(self):
         return self.email
+
+class NotaryCompanyGroup(models.Model):
+    name = models.CharField(max_length=255)
+    companies = models.ManyToManyField(NotaryClientCompany, related_name='groups')
