@@ -362,6 +362,7 @@ class InvoiceView(APIView):
 
             return render(request, "order_product_detail.html", {"invoice_data": data}, status=status_code)
         # Else, return JSON response
+        print("Returning JSON response", json.dumps(data, indent=4))
         return Response(data, status=status_code)
 
 
@@ -391,6 +392,15 @@ def retrieve_invoice_by_payment_intent(request, payment_intent_id):
 
         if not response:
             return Response({"error": "Invoice not found in external system"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Add additional order details to match InvoiceView response
+        if order.notary_order_id:
+            response["notary_order_id"] = order.notary_order_id
+        response["primary_contact_firstname"] = order.contact_first_name_sched
+        response["primary_contact_lastname"] = order.contact_last_name_sched
+        response["preferred_time"] = order.preferred_datetime
+        response["accepted_at"] = order.accepted_at
+        response["preferred_timezone"] = order.preferred_timezone if order.preferred_timezone else None
 
         return Response(response, status=status.HTTP_200_OK)
 
