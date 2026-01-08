@@ -33,7 +33,7 @@ CLIENT_SECRET = config('CLIENT_SECRET')
 SCOPES = config('SCOPES')
 REDIRECT_URI = config('REDIRECT_URI')
 
-
+GOOGLE_API_KEY = config('GOOGLE_API_KEY')
 STRIPE_TEST = str(config('STRIPE_LIVE')).lower() != 'true' if config('STRIPE_LIVE') else True
 
 if STRIPE_TEST:

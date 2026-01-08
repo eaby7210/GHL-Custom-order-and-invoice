@@ -20,6 +20,8 @@ from django.utils.decorators import method_decorator
 from stripe_payment.services import NotaryDashServices
 from stripe_payment.models import NotaryClientCompany, NotaryUser
 from stripe_payment.utils import create_stripe_customer
+from django.core.cache import cache
+from .services import GoogleService
 
 
 class LatestTermsOfConditionsView(APIView):
@@ -291,3 +293,131 @@ class ServiceLookupView(APIView):
             )
 
 
+
+
+class GooglePlacesAutocompleteView(APIView):
+    """
+    Search for places using Google Places Autocomplete API.
+    Validates user, caches results, and returns simplified response.
+    """
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        text = request.data.get('text')
+        
+        if not user_id or not text:
+            return Response(
+                {"detail": "Both 'user_id' and 'text' are required."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # Validate User
+        if not NotaryUser.objects.filter(id=user_id).exists():
+             return Response(
+                {"detail": "Invalid User ID."}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check Cache
+        cache_key = f"autocomplete_{text.lower().strip().replace(' ', '_')}"
+        cached_data = cache.get(cache_key)
+        
+        if cached_data:
+            return Response(cached_data)
+            
+        # Fetch from Google
+        service = GoogleService()
+        result = service.get_autocomplete(text)
+        
+        if "error" in result:
+             # Pass through Google error usually, or generic 500
+             return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+             
+        # Transform Response
+        suggestions = []
+        for item in result.get('suggestions', []):
+            place_pred = item.get('placePrediction')
+            if place_pred:
+                suggestions.append({
+                    "description": place_pred.get('text', {}).get('text'),
+                    "place_id": place_pred.get('placeId')
+                })
+        
+        # Cache the result (60 mins = 3600 seconds)
+        cache.set(cache_key, suggestions, timeout=3600)
+        
+        return Response(suggestions)
+
+
+
+
+
+class GooglePlaceDetailsView(APIView):
+    """
+    Get detailed information about a place, including parsed address and timezone.
+    """
+    def post(self, request):
+        place_id = request.data.get('place_id')
+        
+        if not place_id:
+            return Response(
+                {"detail": "'place_id' is required."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        service = GoogleService()
+        
+        # 1. Get Place Details
+        # Requesting location for timezone and addressComponents for parsing
+        fields = "addressComponents,location" 
+        details_result = service.get_place_details(place_id, fields=fields)
+        
+        if "error" in details_result:
+            return Response(details_result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        # 2. Parse Address
+        components = details_result.get('addressComponents', [])
+        location = details_result.get('location', {})
+        
+        address_map = {
+            'street_number': '',
+            'route': '',
+            'locality': '',
+            'administrative_area_level_1': '',
+            'postal_code': '',
+            'subpremise': ''
+        }
+        
+        for comp in components:
+            types = comp.get('types', [])
+            for t in types:
+                if t in address_map:
+                    # Prefer shortText for state/administrative_area_level_1 for frontend compatibility
+                    if t == 'administrative_area_level_1':
+                         address_map[t] = comp.get('shortText') or comp.get('longText')
+                    else:
+                        address_map[t] = comp.get('longText') or comp.get('shortText')
+                    
+        street_address = f"{address_map['street_number']} {address_map['route']}".strip()
+        
+        response_data = {
+            "street_address": street_address,
+            "city": address_map['locality'],
+            "state": address_map['administrative_area_level_1'],
+            "postal_code": address_map['postal_code'],
+            "unit": address_map['subpremise'],
+            # Timezone fields placeholders
+            "timezone_id": None,
+            "timezone_name": None
+        }
+
+        # 3. Get Timezone
+        lat = location.get('latitude')
+        lng = location.get('longitude')
+        
+        if lat is not None and lng is not None:
+            tz_result = service.get_timezone(lat, lng)
+            if "timeZoneId" in tz_result:
+                response_data["timezone_id"] = tz_result.get("timeZoneId")
+                response_data["timezone_name"] = tz_result.get("timeZoneName")
+        
+        return Response(response_data)
