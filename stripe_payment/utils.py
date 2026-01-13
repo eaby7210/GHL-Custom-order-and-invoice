@@ -33,6 +33,22 @@ def create_stripe_customer(company_name, email=None, metadata=None):
         print(f"❌ Error creating Stripe Customer: {e}")
         return None
 
+def apply_coupon_to_customer(customer_id, coupon_id):
+    """
+    Applies a coupon to a customer.
+    This counts against the coupon's redemption limit.
+    """
+    try:
+        stripe.Customer.modify(
+            customer_id,
+            coupon=coupon_id
+        )
+        print(f"✅ Applied coupon {coupon_id} to customer {customer_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Error applying coupon to customer: {e}")
+        return False
+
 def generate_order_line_items(order: Order):
     """
     Generates the line items list for an order, used for both Stripe Session and PaymentIntent metadata.
@@ -139,7 +155,7 @@ def create_stripe_session(order: Order, domain, customer_id=None):
 
     coupon_data = None
     if order.coupon_code:
-        coupon = get_coupon_by_promo_code(order.coupon_code)
+        coupon = get_coupon_by_promo_code(order.coupon_code.strip())
         if coupon:
             print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
             # Create discount object correctly
@@ -174,6 +190,7 @@ def create_stripe_session(order: Order, domain, customer_id=None):
 
     }
     if coupon_data:
+        print(f"applying coupon")
         session_params["discounts"] = [coupon_data]
     else:
         session_params["allow_promotion_codes"] = True
@@ -193,6 +210,9 @@ def get_coupon_by_promo_code(code)-> stripe_coupon |None:
     Looks up a Stripe promotion code (not coupon ID) and returns the attached coupon if valid.
     """
     try:
+        if code:
+            code = code.strip()
+        print(f"Looking up promotion code: {code}")
         promo_codes : ListObject["PromotionCode"] = stripe.PromotionCode.list(code=code, limit=1)
         print(f"Promotion code: {promo_codes}")
         # print(f"promocode {json.dumps(promo_codes, indent=4)}")

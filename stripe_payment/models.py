@@ -647,8 +647,7 @@ class NotaryUser(models.Model):
     last_signed_at = models.DateTimeField(null=True, blank=True)
     has_roles = models.JSONField(default=list, blank=True)
     is_admin = models.BooleanField(default=False)
-    stripe_customer_id = models.CharField(max_length=255, null=True, blank=True)
-    stripe_default_payment_method = models.CharField(max_length=255, null=True, blank=True)
+
 
     # Pivot fields
     pivot_active = models.BooleanField(default=True)

@@ -26,7 +26,8 @@ from .utils import (
     create_payment_intent,
     generate_order_line_items,
     list_payment_methods,attach_payment_method,
-    set_default_payment_method, get_coupon
+    set_default_payment_method, get_coupon,
+    apply_coupon_to_customer
 )
 from .services import InvoiceServices, NotaryDashServices
 import stripe
@@ -209,6 +210,24 @@ class FormSubmissionAPIView(APIView):
             order.service_type = "a_la_carte"
 
 
+        # Calculate Order Protection Price
+        ala_carte_protection = float(data.get("alaCarteOrderProtection", 0))
+        ala_carte_protection_check = data.get("alaCarteOrderProtectionCheck", False)
+        bundle_protection = float(data.get("bundleOrderProtection", 0))
+        bundle_protection_check = data.get("bundleOrderProtectionCheck", False)
+
+        total_protection_price = Decimal('0.00')
+
+        if ala_carte_protection_check:
+             total_protection_price += Decimal(str(ala_carte_protection))
+        
+        if bundle_protection_check:
+             total_protection_price += Decimal(str(bundle_protection))
+        
+        if total_protection_price > 0:
+            order.order_protection = True
+            order.order_protection_price = total_protection_price
+
         order.total_price = total_bundle_price + total_ala_price
         order.save()
 
@@ -246,6 +265,10 @@ class FormSubmissionAPIView(APIView):
                     amount_cents -= discount_amount_cents
                     if amount_cents < 50: # Minimum charge for Stripe is usually around $0.50
                         amount_cents = 50
+                    
+                    # Apply coupon to customer to track redemption
+                    if stripe_customer_id:
+                        apply_coupon_to_customer(stripe_customer_id, coupon.id)
 
                 print(f"Attempting direct charge: {amount_cents} cents with {payment_method_id}")
 
@@ -471,7 +494,7 @@ def notary_view(request):
     user = NotaryUser.objects.filter(id=user_id).first()
 
     first_visit = False
-
+    
     if not user:
         # Fetch from API
         user_resp = NotaryDashServices.get_client_one_user(company_id, user_id)
@@ -510,10 +533,26 @@ def notary_view(request):
             page_visited=True,  # First time visit
             is_admin=is_first_user,
         )
-
         first_visit = True
 
     else:
+        # User exists, check for company mismatch
+        if not user.last_company or str(user.last_company.id) != str(company_id):
+             user_resp = NotaryDashServices.get_client_one_user(company_id, user_id)
+             if user_resp and user_resp.get("data"):
+                 u = user_resp.get("data")
+                 
+                 # Update user details
+                 user.email = u.get("email")
+                 user.email_unverified = u.get("email_unverified")
+                 user.first_name = u.get("first_name", "")
+                 user.last_name = u.get("last_name", "")
+                 user.name = u.get("name", "")
+                 user.photo_url = u.get("photo_url")
+                 user.last_company = company
+                 user.attr = u.get("attr", {})
+                 user.save()
+        
         # User exists → check first visit
         if not user.page_visited:
             user.page_visited = True
@@ -1225,7 +1264,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
                 "parent_id": prd.get("id") if prd_response else None,
                 "name": prd.get("name") if prd_response else prd_name,
                 "pay_to_notary": prd.get("pay_to_notary", 0) if prd_response else 0,
-                "charge_client": prd.get("charge_client", order.total_price) if prd_response else order.total_price,
+                "charge_client": prd.get("charge_client", order.total_price+order.order_protection_price) if prd_response else order.total_price+order.order_protection_price,
                 "scanbacks_required": True
             },
             "attr": {
@@ -1381,7 +1420,7 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
         items.append(build_item(
             name="Custom Order",
             description=f"{order.service_type.title()} Service",
-            price=order.total_price or session_total_price or 0
+            price=order.total_price + order.order_protection_price or session_total_price or 0
         ))
         notary_product_names.append("Custom Order")
 
