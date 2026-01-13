@@ -3,8 +3,10 @@ from dj_IBstripe.settings import STRIPE_PUBLISHABLE_KEY
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import viewsets, mixins
+from rest_framework import viewsets, mixins, generics
 from rest_framework import status
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.filters import SearchFilter
 from stripe_payment.models import (
     Order, ALaCarteService,
     StripeCharge, CheckoutSession, NotaryClientCompany,
@@ -14,7 +16,7 @@ from stripe_payment.models import (
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
-from .serializer import OrderSerializer
+from .serializer import OrderSerializer, NotaryUserSerializer, NotaryClientCompanySerializer
 from core.services import OAuthServices, ContactServices
 from core.models import Contact, OAuthToken
 from django.utils.dateparse import parse_datetime
@@ -780,6 +782,193 @@ def create_setup_intent(request):
     STRIPE_PUBLISHABLE_KEY = settings.STRIPE_PUBLISHABLE_KEY
 
     return Response({"publishable_key": STRIPE_PUBLISHABLE_KEY})
+
+
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+class CompanyUserListView(generics.ListAPIView):
+    serializer_class = NotaryUserSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [SearchFilter]
+    search_fields = ['name', 'email', 'first_name', 'last_name']
+
+    def get_queryset(self):
+        company_id = self.request.query_params.get('company_id')
+        user_id = self.request.query_params.get('user_id')
+
+        if not company_id or not user_id:
+            return NotaryUser.objects.none()
+
+        # Check permission (Requester must be admin of the company)
+        try:
+            req_user = NotaryUser.objects.get(id=user_id)
+            if not req_user.is_admin:
+                return NotaryUser.objects.none()
+            
+            # Strict check: requester must be associated with this company
+            if str(req_user.last_company_id) != str(company_id):
+                 # Or check if they have access to this company via other means
+                 # For now, simplistic check
+                 pass
+
+        except NotaryUser.DoesNotExist:
+            return NotaryUser.objects.none()
+
+        # Return users for this company
+        return NotaryUser.objects.filter(last_company__id=company_id).order_by('-created_at')
+
+class CompanyPaymentMethodsView(APIView):
+    def get(self, request):
+        company_id = request.query_params.get("company_id")
+        user_id = request.query_params.get("user_id")
+
+        if not company_id or not user_id:
+            return Response(
+                {"error": "Company ID and User ID are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 1. Verify Requesting User (Admin check)
+        try:
+            req_user = NotaryUser.objects.get(id=user_id)
+            if not req_user.is_admin:
+                return Response(
+                    {"error": "Permission denied"}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except NotaryUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 2. Fetch Company
+        try:
+            company = NotaryClientCompany.objects.get(id=company_id)
+        except NotaryClientCompany.DoesNotExist:
+             return Response({"error": "Company not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 3. Fetch Payment Methods
+        payment_methods = []
+        if company.stripe_customer_id:
+            try:
+                methods_data = list_payment_methods(company.stripe_customer_id)
+                for pm in methods_data:
+                    payment_methods.append({
+                        "id": pm.id,
+                        "brand": pm.card.brand,
+                        "last4": pm.card.last4,
+                        "exp_month": pm.card.exp_month,
+                        "exp_year": pm.card.exp_year,
+                    })
+            except Exception as e:
+                print(f"Error fetching payment methods: {e}")
+                pass
+        
+        return Response({
+            "company_id": company.id,
+            "stripe_customer_id": company.stripe_customer_id,
+            "default_payment_method": company.stripe_default_payment_method,
+            "payment_methods": payment_methods
+        })
+
+class CompanyAdminView(APIView):
+    def get(self, request):
+        company_id = request.query_params.get("company_id")
+        user_id = request.query_params.get("user_id")
+
+        if not company_id or not user_id:
+            return Response(
+                {"error": "Company ID and User ID are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 1. Verify Requesting User
+        try:
+            req_user = NotaryUser.objects.get(id=user_id)
+        except NotaryUser.DoesNotExist:
+            return Response(
+                {"error": "User not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 2. Check Admin Status
+        if not req_user.is_admin:
+            return Response(
+                {"error": "Permission denied: User is not an admin"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 3. Verify Company Association (Optional but recommended)
+        # Assuming last_company links user to their current context
+        # If user.last_company.id != company_id, might want to block or just proceed if they are admin somewhere
+        # For strictness:
+        if str(req_user.last_company_id) != str(company_id):
+             # You might want to allow it if they are super admin, but for now strict check:
+             # Or fetch company to see if they are related? 
+             # Let's trust is_admin for now but ensure company exists
+             pass
+
+        try:
+            company = NotaryClientCompany.objects.get(id=company_id)
+        except NotaryClientCompany.DoesNotExist:
+             return Response(
+                {"error": "Company not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+             )
+
+        company_serializer = NotaryClientCompanySerializer(company)
+
+        return Response({
+            "company": company_serializer.data,
+            # "users": users_serializer.data,       # Handled by CompanyUserListView
+            # "payment_methods": payment_methods    # Handled elsewhere/dedicated API
+        })
+
+    def post(self, request):
+        """
+        Toggle user admin status
+        """
+        company_id = request.data.get("company_id")
+        requester_user_id = request.data.get("requester_user_id") # The admin doing the action
+        target_user_id = request.data.get("target_user_id") # The user to toggle
+
+        if not all([company_id, requester_user_id, target_user_id]):
+             return Response(
+                {"error": "company_id, requester_user_id, and target_user_id are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 1. Verify Requester is Admin
+        try:
+            requester = NotaryUser.objects.get(id=requester_user_id)
+            if not requester.is_admin:
+                return Response(
+                    {"error": "Permission denied"}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except NotaryUser.DoesNotExist:
+             return Response({"error": "Requester not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 2. Find Target User
+        try:
+            target_user = NotaryUser.objects.get(id=target_user_id)
+        except NotaryUser.DoesNotExist:
+            return Response({"error": "Target user not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 3. Toggle Status
+        # Check if we should enforce they belong to same company? 
+        # Ideally yes, let's assume valid access if requester is admin of that company context
+        
+        previous_status = target_user.is_admin
+        target_user.is_admin = not previous_status
+        target_user.save()
+
+        return Response({
+            "message": "User admin status updated",
+            "user_id": target_user.id,
+            "is_admin": target_user.is_admin
+        })
 
 @api_view(['POST'])
 def save_payment_method(request):

@@ -1,8 +1,28 @@
 from rest_framework import serializers, viewsets, mixins
 from .models import (
     Order, ALaCarteService,
-    StripeCharge, CheckoutSession, Invoice, BusinessDetails, Discount
+    StripeCharge, CheckoutSession, Invoice, BusinessDetails, Discount,
+    NotaryUser, NotaryClientCompany
 )
+
+
+class NotaryUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotaryUser
+        fields = [
+            "id", "email", "first_name", "last_name", "name", 
+            "photo_url", "is_admin", "type", "disabled", 
+            "country_code", "tz", "created_at", "last_login_at"
+        ]
+
+class NotaryClientCompanySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotaryClientCompany
+        fields = [
+            "id", "company_name", "type", "active", 
+            "stripe_customer_id", "stripe_default_payment_method",
+            "created_at", "updated_at"
+        ]
 
 
 

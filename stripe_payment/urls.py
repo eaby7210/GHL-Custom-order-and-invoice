@@ -5,7 +5,8 @@ from .views import (
     OrderRetrieveView, notary_view, stripe_coupon, test_email_template,
     OrderRetrieveView, notary_view, stripe_coupon, test_email_template,
     create_setup_intent, save_payment_method, set_default_card,
-    retrieve_invoice_by_payment_intent, InvoiceView
+    retrieve_invoice_by_payment_intent, InvoiceView, CompanyAdminView,
+    CompanyUserListView, CompanyPaymentMethodsView
 )
 
 router = DefaultRouter()
@@ -22,6 +23,9 @@ urlpatterns = [
     path("create-setup-intent/", create_setup_intent, name="create-setup-intent"),
     path("save-payment-method/", save_payment_method, name="save-payment-method"),
     path("set-default-card/", set_default_card, name="set-default-card"),
+    path("company-admin/", CompanyAdminView.as_view(), name="company-admin"),
+    path("company-users/", CompanyUserListView.as_view(), name="company-users"),
+    path("company-payment-methods/", CompanyPaymentMethodsView.as_view(), name="company-payment-methods"),
     path('', include(router.urls)),
 ]
 
