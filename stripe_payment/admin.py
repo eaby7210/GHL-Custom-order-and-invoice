@@ -132,7 +132,7 @@ class NotaryUserAdmin(admin.ModelAdmin):
         'last_ip',
         'last_company__company_name',
         'pivot_company',
-        'stripe_customer_id',
+
     ]
 
     list_filter = [
@@ -193,10 +193,6 @@ class NotaryUserAdmin(admin.ModelAdmin):
         }),
         ('Additional Data', {
             'fields': ('attr',),
-            'classes': ('collapse',)
-        }),
-        ('Payment Information', {
-            'fields': ('stripe_customer_id', 'stripe_default_payment_method'),
             'classes': ('collapse',)
         }),
         ('Terms & Legal', {
