@@ -1642,6 +1642,15 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
     except:
         contact_ph = order.contact_phone_sched
     print(f"Formatted contact phone: {contact_ph}")
+    
+    # Try to use client_user phone if available and valid
+    client_raw_phone = client_user.get("attr", {}).get("phone") or client_user.get("attr", {}).get("mobile_phone")
+    if client_raw_phone:
+        try:
+             contact_ph = format_phone_number(str(client_raw_phone))
+             print(f"Using client_user phone: {contact_ph}")
+        except Exception as e:
+             print(f"Client phone {client_raw_phone} invalid, keeping order phone: {e}")
     total_details = event_obj.total_details if event_obj.object == "checkout.session" else event_obj.amount_details
     # Safely get discount amount (support both object/dict and missing field)
     discount_amount = total_details.get("amount_discount", 0) if total_details else 0
@@ -1673,7 +1682,7 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
         "contactDetails": {
             "id": contact.get("id"),
             "name": client_user.get("name") or (order.contact_first_name_sched + " " + order.contact_last_name_sched if order.contact_first_name_sched and order.contact_last_name_sched else ""),
-            "phoneNo": client_user.get("attr", {}).get("phone") or client_user.get("attr", {}).get("mobile_phone") or contact_ph or "",
+            "phoneNo": contact_ph or "",
             "email": client_user.get("email", ""),
             "additionalEmails": [],
             "companyName": "",
