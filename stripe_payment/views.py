@@ -1672,8 +1672,8 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
         "title": f"Invoice -{order.get_service_type_display() if order.service_type !="mixed" else "Bundle+A La Carte"}",
         "contactDetails": {
             "id": contact.get("id"),
-            "name": order.contact_first_name_sched + " " + order.contact_last_name_sched if order.contact_first_name_sched and order.contact_last_name_sched else "",
-            "phoneNo": contact_ph or "",
+            "name": client_user.get("name") or (order.contact_first_name_sched + " " + order.contact_last_name_sched if order.contact_first_name_sched and order.contact_last_name_sched else ""),
+            "phoneNo": client_user.get("attr", {}).get("phone") or client_user.get("attr", {}).get("mobile_phone") or contact_ph or "",
             "email": client_user.get("email", ""),
             "additionalEmails": [],
             "companyName": "",
