@@ -387,7 +387,7 @@ class InvoiceView(APIView):
 
             return render(request, "order_product_detail.html", {"invoice_data": data}, status=status_code)
         # Else, return JSON response
-        print("Returning JSON response", json.dumps(data, indent=4))
+     
         return Response(data, status=status_code)
 
 
