@@ -1325,3 +1325,5 @@ class DiscountLevel(TimeStampedModel):
 
     def __str__(self):
         return f"{self.items} items → {self.percent} {"Enabled" if self.active_flag else "Disabled"}%"
+
+        
