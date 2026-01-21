@@ -21,7 +21,8 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('',include('stripe_payment.urls')),
     path("summernote/", include("django_summernote.urls")), 
-    path("order_page/", include("order_page.urls"))
+    path("order_page/", include("order_page.urls")),
+    path("twebs/", include("tolt.urls"))
 ]
 
 admin.site.site_header = "IB Order Page Admin"

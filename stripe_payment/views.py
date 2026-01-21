@@ -818,7 +818,7 @@ class CompanyUserListView(generics.ListAPIView):
             return NotaryUser.objects.none()
 
         # Return users for this company
-        return NotaryUser.objects.filter(last_company__id=company_id).order_by('-created_at')
+        return NotaryUser.objects.filter(last_company__id=company_id).exclude(id=user_id).order_by('-created_at')
 
 class CompanyPaymentMethodsView(APIView):
     def get(self, request):

@@ -18,6 +18,9 @@ from .models import (
 )
 from .forms import SubmenuItemForm
 from django.utils.html import format_html
+from .models import TypeformForm, TypeformField, TypeformPartnerMapping
+from .services import TypeformService
+from django.contrib import messages
 
 
 
@@ -575,3 +578,135 @@ class CheckDiscloureAdmin(admin.ModelAdmin):
             "fields": ("name", "message", "required", "active_flag", "sort_order")
         }),
     )
+
+# -------------------------------------------------------------------
+#  Typeform Admin
+# -------------------------------------------------------------------
+from .models import (
+    TypeformForm, TypeformField, TypeformPartnerMapping,
+    TypeformWelcomeScreen, TypeformThankYouScreen, TypeformLogic
+)
+from .services import TypeformService
+from django.contrib import messages
+
+class TypeformFieldInline(admin.TabularInline):
+    model = TypeformField
+    extra = 0
+    fields = ("title", "field_type", "field_id", "ref")
+    readonly_fields = ("title", "field_type", "field_id", "ref")
+    show_change_link = True
+
+class TypeformWelcomeScreenInline(admin.TabularInline):
+    model = TypeformWelcomeScreen
+    extra = 0
+    fields = ("title", "ref")
+    readonly_fields = ("title", "ref")
+    show_change_link = True
+
+class TypeformThankYouScreenInline(admin.TabularInline):
+    model = TypeformThankYouScreen
+    extra = 0
+    fields = ("title", "type", "ref")
+    readonly_fields = ("title", "type", "ref")
+    show_change_link = True
+
+class TypeformLogicInline(admin.TabularInline):
+    model = TypeformLogic
+    extra = 0
+    fields = ("ref", "type")
+    readonly_fields = ("ref", "type")
+    show_change_link = True
+
+@admin.register(TypeformForm)
+class TypeformFormAdmin(admin.ModelAdmin):
+    list_display = ("title", "form_id", "created_at")
+    search_fields = ("title", "form_id")
+    actions = ["sync_form_definition"]
+    inlines = [
+        TypeformFieldInline, 
+        TypeformWelcomeScreenInline, 
+        TypeformThankYouScreenInline, 
+        TypeformLogicInline
+    ]
+
+    def sync_form_definition(self, request, queryset):
+        service = TypeformService()
+        success_count = 0
+        
+        for form in queryset:
+            try:
+                # Use the service sync_form which delegates to model static method
+                service.sync_form(form.form_id)
+                success_count += 1
+            except Exception as e:
+                self.message_user(request, f"Error syncing form {form.form_id}: {str(e)}", level=messages.ERROR)
+        
+        if success_count > 0:
+            self.message_user(request, f"Successfully synced {success_count} form(s).", level=messages.SUCCESS)
+    sync_form_definition.short_description = "Sync Definition from Typeform API"
+
+
+class TypeformPartnerMappingInline(admin.TabularInline):
+    model = TypeformPartnerMapping
+    extra = 1
+    autocomplete_fields = ("partner",)
+    fields = ("choice_ref", "choice_label", "partner")
+    show_change_link = True
+
+@admin.register(TypeformField)
+class TypeformFieldAdmin(admin.ModelAdmin):
+    list_display = ("title", "field_type", "field_id", "form")
+    list_filter = ("form", "field_type")
+    search_fields = ("title", "field_id", "ref")
+    inlines = [TypeformPartnerMappingInline]
+
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
+        
+        # Handle deletions
+        for obj in formset.deleted_objects:
+            obj.delete()
+
+        for instance in instances:
+            if isinstance(instance, TypeformPartnerMapping):
+                # Ensure form is set from the parent field
+                # The inline is on TypeformField, so instance.field is naturally set by Django admin internals usually,
+                # but let's be safe. 'instance.field' might already be set.
+                # Actually, in an inline on TypeformField, the foreign key to TypeformField is handled automatically.
+                # But 'instance.form' needs to be set.
+                if hasattr(instance, 'field') and instance.field:
+                    instance.form = instance.field.form
+            instance.save()
+        formset.save_m2m()
+
+@admin.register(TypeformWelcomeScreen)
+class TypeformWelcomeScreenAdmin(admin.ModelAdmin):
+    list_display = ("title", "ref", "form")
+    list_filter = ("form",)
+    search_fields = ("title", "ref")
+
+@admin.register(TypeformThankYouScreen)
+class TypeformThankYouScreenAdmin(admin.ModelAdmin):
+    list_display = ("title", "type", "ref", "form")
+    list_filter = ("form", "type")
+    search_fields = ("title", "ref")
+
+@admin.register(TypeformLogic)
+class TypeformLogicAdmin(admin.ModelAdmin):
+    list_display = ("ref", "type", "form")
+    list_filter = ("form", "type")
+    search_fields = ("ref",)
+
+@admin.register(TypeformPartnerMapping)
+class TypeformPartnerMappingAdmin(admin.ModelAdmin):
+    list_display = ("choice_label", "partner", "field", "form")
+    list_filter = ("form", "field")
+    search_fields = ("choice_label", "choice_ref", "partner__company_name", "partner__email")
+    autocomplete_fields = ("field", "partner", "form")
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        # Optional customization e.g. filtering fields based on selected form
+        return form
+
+

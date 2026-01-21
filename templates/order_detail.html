@@ -48,7 +48,9 @@
     </li>
   {% endif %}
   {% if order.access_app_lock_box %}
-    <li>App Lock Box - Yes</li>
+    <li>App Lock Box - Yes<br/>
+       {% if order.app_lock_link %} App Link: {{ order.app_lock_link }} {% endif %}
+    </li>
   {% endif %}
   {% if order.access_meet_contact %}
     <li>Meet Contact -Details<br/>

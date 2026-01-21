@@ -46,6 +46,7 @@ class Order(models.Model):
     lock_box_code = models.CharField(max_length=50, blank=True, null=True)
     lock_box_location = models.TextField(blank=True, null=True)
     access_app_lock_box = models.BooleanField(default=False)
+    app_lock_link = models.TextField(blank=True, null=True)
     access_meet_contact = models.BooleanField(default=False)
     access_hidden_key = models.BooleanField(default=False)
     hidden_key_directions = models.TextField(blank=True, null=True)
@@ -153,6 +154,7 @@ class Order(models.Model):
             lock_box_code=data.get("lock_box_code"),
             lock_box_location=data.get("lock_box_location"),
             access_app_lock_box=data.get("access_app_lock_box", False),
+            app_lock_link=data.get("app_lock_link"),
             access_meet_contact=data.get("access_meet_contact", False),
             access_hidden_key=data.get("access_hidden_key", False),
             hidden_key_directions=data.get("hidden_key_directions"),

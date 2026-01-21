@@ -207,6 +207,35 @@ class ContactServices:
             print(f"\033[91m❌ Failed to create contact: {response.status_code} - {response.text}\033[0m")
             return response.json(), response.status_code
 
+    @staticmethod
+    def get_contact_list(location_id, **kwargs):
+        """
+        Fetch list of contacts from GoHighLevel API.
+        Supported kwargs: limit, startAfter, startAfterId, query
+        """
+        token_obj = OAuthServices.get_valid_access_token_obj(location_id)
+        headers = {
+            "Authorization": f"Bearer {token_obj.access_token}",
+            "Accept": "application/json",
+            "Version": API_VERSION,
+        }
+        
+        url = f"{BASE_URL}/contacts/"
+        params = {
+            "locationId": token_obj.LocationId,
+        }
+        # Add optional pagination/search parameters
+        for key in ['limit', 'startAfter', 'startAfterId', 'query']:
+            if key in kwargs and kwargs[key]:
+                params[key] = kwargs[key]
+
+        response = requests.get(url, headers=headers, params=params)
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise ContactServiceError(f"API request failed: {response.status_code}")
+
     
     @staticmethod
     def get_contacts(location_id,query=None, url=None, limit=LIMIT_PER_PAGE):

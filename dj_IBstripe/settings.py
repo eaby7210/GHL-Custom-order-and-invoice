@@ -51,6 +51,9 @@ if NOTARY_TEST:
 else:
     NOTARY_API_KEY = config('NOTARY_LIVE_API_KEY')
 
+TYPEFORM_ACCESS_TOKEN = config('TYPEFORM_ACCESS_TOKEN', default=None)
+TOLT_KEY = config('TOLT_KEY', default=None)
+
 DEBUG = True
 
 ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', '37d5165a4f2b.ngrok-free.app', 'localhost:8000']
@@ -84,6 +87,7 @@ INSTALLED_APPS = [
     'core',
     'stripe_payment',
     'order_page',
+    'tolt',
 ]
 
 MIDDLEWARE = [
@@ -142,6 +146,16 @@ else:
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
+    # DATABASES = {
+    #     'default': {
+    #         'ENGINE': config('DB_ENGINE'),
+    #         'NAME': config('DB_NAME'),
+    #         'HOST': config('DB_HOST'),
+    #         'USER': config('DB_USER'),
+    #         'PASSWORD': config('DB_PASSWORD'),
+    #         'port': config('DB_PORT')
+    #     }
+    # } 
 STATIC_ROOT = BASE_DIR / "static"
 
 

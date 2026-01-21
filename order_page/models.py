@@ -48,10 +48,202 @@ class TypeformForm(models.Model):
     title = models.CharField(max_length=255)
     settings = models.JSONField(default=dict, blank=True)
     endings = models.JSONField(default=list, blank=True)
+    
+    # Enhanced fields
+    workspace = models.JSONField(default=dict, blank=True)
+    theme = models.JSONField(default=dict, blank=True)
+    cui_settings = models.JSONField(default=dict, blank=True)
+    variables = models.JSONField(default=dict, blank=True)
+    hidden = models.JSONField(default=list, blank=True)
+    
+
     created_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         return self.title or self.form_id
+
+    @staticmethod
+    @transaction.atomic
+    def create_or_update_from_api(data: dict):
+        """
+        Creates or updates a TypeformForm and its related models from the API response data.
+        """
+        # Update or create Form
+        form_obj, _ = TypeformForm.objects.update_or_create(
+            form_id=data.get("id"),
+            defaults={
+                "title": data.get("title", ""),
+                "settings": data.get("settings", {}),
+                "endings": data.get("endings", []),
+                "workspace": data.get("workspace", {}),
+                "theme": data.get("theme", {}),
+                "cui_settings": data.get("cui_settings", {}),
+                "variables": data.get("variables", {}),
+                "hidden": data.get("hidden", []),
+            },
+        )
+        
+        # --- Sync Welcome Screens ---
+        current_welcome_ids = []
+        for ws in data.get("welcome_screens", []):
+            w_obj, _ = TypeformWelcomeScreen.objects.update_or_create(
+                form=form_obj,
+                ref=ws.get("ref"),
+                defaults={
+                    "title": ws.get("title"),
+                    "properties": ws.get("properties", {}),
+                    "attachment": ws.get("attachment", {}),
+                    "layout": ws.get("layout", {}),
+                }
+            )
+            current_welcome_ids.append(w_obj.id)
+        # Verify: Remove old ones? For now, let's keep it simple and additive/update-only to avoid data loss if API response is partial? 
+        # API response usually full, so deletion of orphans is correct for strict sync.
+        # form_obj.welcome_screens.exclude(id__in=current_welcome_ids).delete()
+
+        # --- Sync Thank You Screens ---
+        current_thankyou_ids = []
+        for ty in data.get("thankyou_screens", []):
+            ty_obj, _ = TypeformThankYouScreen.objects.update_or_create(
+                form=form_obj,
+                ref=ty.get("ref"),
+                defaults={
+                    "title": ty.get("title"),
+                    "type": ty.get("type"),
+                    "properties": ty.get("properties", {}),
+                    "attachment": ty.get("attachment", {}),
+                    "layout": ty.get("layout", {}),
+                }
+            )
+            current_thankyou_ids.append(ty_obj.id)
+
+        # --- Sync Logic ---
+        current_logic_ids = []
+        for l in data.get("logic", []):
+            l_obj, _ = TypeformLogic.objects.update_or_create(
+                form=form_obj,
+                ref=l.get("ref"),
+                defaults={
+                    "type": l.get("type"),
+                    "actions": l.get("actions", []),
+                }
+            )
+            current_logic_ids.append(l_obj.id)
+
+        # --- Sync Fields ---
+        fields_data = data.get("fields", [])
+        current_field_ids = []
+        for f in fields_data:
+            field_obj, _ = TypeformField.objects.update_or_create(
+                form=form_obj,
+                field_id=f.get("id"),
+                defaults={
+                    "ref": f.get("ref"),
+                    "field_type": f.get("type"),
+                    "title": f.get("title"),
+                    "properties": f.get("properties", {}),
+                    "choices": f.get("properties", {}).get("choices", []), 
+                },
+            )
+            current_field_ids.append(field_obj.id)
+
+            # --- Sync Partner Mappings (Choices) ---
+            # Automatically populate TypeformPartnerMapping for dropdown choices
+            if f.get("type") == "dropdown":
+                choices = f.get("properties", {}).get("choices", [])
+                current_choice_refs = []
+                for choice in choices:
+                    choice_ref = choice.get("ref")
+                    choice_label = choice.get("label")
+                    
+                    if choice_ref:
+                        # Use manual lookup/create to avoid immediate save() trigger from get_or_create
+                        # and to allow setting the recursion guard flag.
+                        mapping_obj = TypeformPartnerMapping.objects.filter(
+                            form=form_obj,
+                            field=field_obj,
+                            choice_ref=choice_ref
+                        ).first()
+
+                        if not mapping_obj:
+                            # Try to find by label if ref lookup failed (for locally created choices without ref)
+                            from django.db.models import Q
+                            mapping_obj = TypeformPartnerMapping.objects.filter(
+                                form=form_obj,
+                                field=field_obj,
+                                choice_label=choice_label
+                            ).filter(Q(choice_ref__isnull=True) | Q(choice_ref='')).first()
+
+                            if mapping_obj:
+                                # Found match by label! Update the ref.
+                                print(f"[DEBUG] Found existing mapping by label '{choice_label}', updating ref to {choice_ref}")
+                                mapping_obj.choice_ref = choice_ref
+                                mapping_obj._skip_typeform_sync = True
+                                mapping_obj.save()
+                            else:
+                                mapping_obj = TypeformPartnerMapping(
+                                    form=form_obj,
+                                    field=field_obj,
+                                    choice_ref=choice_ref,
+                                    choice_label=choice_label
+                                )
+                                mapping_obj._skip_typeform_sync = True
+                                mapping_obj.save()
+                        
+                        else:
+                            # Update label if changed
+                            if mapping_obj.choice_label != choice_label:
+                                mapping_obj.choice_label = choice_label
+                                mapping_obj._skip_typeform_sync = True
+                                mapping_obj.save()
+                        
+
+                
+                # Optional: Remove mappings that no longer exist in Typeform?
+                # User didn't strictly ask for this, but it's good practice for "sync".
+                # However, be careful not to delete mappings that might have partner data if the ref changed?
+                # But ref is the identity. If ref is gone, choice is gone.
+                # TypeformPartnerMapping.objects.filter(
+                #     form=form_obj, 
+                #     field=field_obj
+                # ).exclude(choice_ref__in=current_choice_refs).delete()
+            
+        return form_obj
+
+
+class TypeformWelcomeScreen(models.Model):
+    form = models.ForeignKey(TypeformForm, related_name="welcome_screens", on_delete=models.CASCADE)
+    ref = models.CharField(max_length=100, null=True, blank=True)
+    title = models.TextField(null=True, blank=True)
+    properties = models.JSONField(default=dict, blank=True)
+    attachment = models.JSONField(default=dict, blank=True)
+    layout = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"Welcome: {self.title[:30] if self.title else self.ref}"
+
+
+class TypeformThankYouScreen(models.Model):
+    form = models.ForeignKey(TypeformForm, related_name="thankyou_screens_models", on_delete=models.CASCADE)
+    ref = models.CharField(max_length=100, null=True, blank=True)
+    title = models.TextField(null=True, blank=True)
+    type = models.CharField(max_length=50, null=True, blank=True)
+    properties = models.JSONField(default=dict, blank=True)
+    attachment = models.JSONField(default=dict, blank=True)
+    layout = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"ThankYou: {self.title[:30] if self.title else self.ref}"
+
+
+class TypeformLogic(models.Model):
+    form = models.ForeignKey(TypeformForm, related_name="logics", on_delete=models.CASCADE)
+    ref = models.CharField(max_length=100, null=True, blank=True)
+    type = models.CharField(max_length=50, null=True, blank=True)
+    actions = models.JSONField(default=list, blank=True)
+    
+    def __str__(self):
+        return f"Logic: {self.ref} ({self.type})"
 
 
 class TypeformField(models.Model):
@@ -151,6 +343,168 @@ class TypeformAnswer(models.Model):
         if self.value_bool is not None:
             return str(self.value_bool)
         return str(self.value_json)
+
+
+
+class TypeformPartnerMapping(models.Model):
+    """Maps a specific choice in a Typeform dropdown field to a Tolt Partner"""
+    form = models.ForeignKey(TypeformForm, on_delete=models.CASCADE, related_name="partner_mappings")
+    field = models.ForeignKey(TypeformField, on_delete=models.CASCADE, related_name="partner_mappings")
+    
+    # Store the choice reference from Typeform (stable ID)
+    choice_ref = models.CharField(max_length=100, help_text="The 'ref' of the choice in Typeform definition", null=True, blank=True)
+    choice_label = models.CharField(max_length=255, help_text="The readable label of the choice")
+    
+    partner = models.ForeignKey("tolt.Partner", on_delete=models.CASCADE, related_name="typeform_mappings", null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("form", "field", "choice_ref")
+        verbose_name = "Typeform Partner Mapping"
+        verbose_name_plural = "Typeform Partner Mappings"
+
+    def __str__(self):
+        return f"{self.choice_label} -> {self.partner}"
+
+    def save(self, *args, **kwargs):
+        # Prevent infinite recursion during sync
+        if getattr(self, "_skip_typeform_sync", False):
+            super().save(*args, **kwargs)
+            return
+
+        # Save to DB first so that the sync process sees the updated values!
+        super().save(*args, **kwargs)
+
+        print(f"[DEBUG] TypeformPartnerMapping.save() called for {self.choice_label}")
+        # Perform API update if specific conditions met
+        if self.field and self.field.field_type == 'dropdown':
+            print(f"[DEBUG] Saving TypeformPartnerMapping for dropdown field {self.field.field_id}")
+            from .services import TypeformService
+            service = TypeformService()
+            
+            try:
+                # 1. Fetch current form definition
+                print(f"[DEBUG] Fetching form {self.form.form_id} from Typeform...")
+                form_data = service.get_form(self.form.form_id)
+                
+                # Check for errors in fetch
+                if "error" in form_data:
+                    raise Exception(f"Failed to fetch form: {form_data['error']}")
+                
+                # 2. Find and modify the field choices
+                found_field = False
+                if "fields" in form_data:
+                    for field_item in form_data["fields"]:
+                        if field_item["id"] == self.field.field_id:
+                            found_field = True
+                            props = field_item.get("properties", {})
+                            choices = props.get("choices", [])
+                            
+                            # Check if choice exists by ref
+                            # Use text comparison for safety
+                            existing_choice = next(
+                                (c for c in choices if str(c.get("ref")) == str(self.choice_ref)), 
+                                None
+                            )
+                            
+                            if existing_choice:
+                                print(f"[DEBUG] Updating existing choice {self.choice_ref} with label '{self.choice_label}'")
+                                # Update label
+                                existing_choice["label"] = self.choice_label
+                            else:
+                                print(f"[DEBUG] Adding new choice {self.choice_ref} -> '{self.choice_label}'")
+                                # Add new choice
+                                choices.append({
+                                    "label": self.choice_label,
+                                    "ref": self.choice_ref
+                                })
+                            
+                            props["choices"] = choices
+                            field_item["properties"] = props
+                            break
+                
+                if found_field:
+                    # 3. PUT the updated form
+                    print(f"[DEBUG] Sending PUT request to update form {self.form.form_id}...")
+                    updated_form = service.update_form(self.form.form_id, form_data)
+                    
+                    if "error" in updated_form:
+                         raise Exception(f"Failed to update form: {updated_form['error']}")
+                    
+                    print(f"[DEBUG] Form updated successfully. Syncing local DB...")
+                    # 4. Sync local DB from response to ensure consistency
+                    # This updates TypeformField choices locally as well
+                    TypeformForm.create_or_update_from_api(updated_form)
+                else:
+                    print(f"[DEBUG] Field {self.field.field_id} not found in form definition.")
+
+            except Exception as e:
+                # Log error or re-raise? 
+                # User said "so that is updated to typefrom as well". 
+                # Failing here is safer than silently ignoring and having inconsistency.
+                print(f"[DEBUG] Error syncing to Typeform: {str(e)}")
+                raise Exception(f"Error syncing to Typeform: {str(e)}")
+
+    def delete(self, *args, **kwargs):
+        print(f"[DEBUG] TypeformPartnerMapping.delete() called for {self.choice_label}")
+        if self.field and self.field.field_type == 'dropdown':
+            try:
+                from .services import TypeformService
+                service = TypeformService()
+                
+                # 1. Fetch form
+                print(f"[DEBUG] Fetching form {self.form.form_id} for deletion...")
+                form_data = service.get_form(self.form.form_id)
+                if "error" in form_data:
+                    raise Exception(f"Failed to fetch form: {form_data['error']}")
+                
+                # 2. Find field and remove choice
+                found_field = False
+                choice_removed = False
+                
+                if "fields" in form_data:
+                    for field_item in form_data["fields"]:
+                        if field_item["id"] == self.field.field_id:
+                            found_field = True
+                            props = field_item.get("properties", {})
+                            choices = props.get("choices", [])
+                            
+                            # Filter out the choice to be deleted
+                            original_count = len(choices)
+                            new_choices = [
+                                c for c in choices 
+                                if str(c.get("ref")) != str(self.choice_ref)
+                            ]
+                            
+                            if len(new_choices) < original_count:
+                                print(f"[DEBUG] Removed choice {self.choice_ref} from payload")
+                                props["choices"] = new_choices
+                                field_item["properties"] = props
+                                choice_removed = True
+                            else:
+                                print(f"[DEBUG] Choice {self.choice_ref} not found in Typeform definition, skipping removal.")
+                            break
+                            
+                if found_field and choice_removed:
+                    # 3. Update form
+                    print(f"[DEBUG] Sending PUT request to update form...")
+                    updated_form = service.update_form(self.form.form_id, form_data)
+                    
+                    if "error" in updated_form:
+                        raise Exception(f"Failed to update form: {updated_form['error']}")
+                    
+                    print(f"[DEBUG] Form updated successfully after deletion.")
+                    # 4. Sync local DB
+                    TypeformForm.create_or_update_from_api(updated_form)
+                    
+            except Exception as e:
+                # Decide if we want to block deletion or just log
+                print(f"[ERROR] Failed to sync deletion to Typeform: {e}")
+                raise Exception(f"Error syncing deletion to Typeform: {str(e)}")
+
+        super().delete(*args, **kwargs)
 
 
 class TypeformParser:

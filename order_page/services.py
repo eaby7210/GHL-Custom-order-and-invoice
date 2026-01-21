@@ -96,3 +96,72 @@ class GoogleService:
             return response.json()
         except requests.exceptions.RequestException as e:
             return {"error": str(e)}
+
+
+class TypeformService:
+    def __init__(self):
+        self.access_token = getattr(settings, 'TYPEFORM_ACCESS_TOKEN', None)
+
+    def get_form(self, form_id):
+        """
+        Retrieves a form by the given form_id. Includes any theme and images attached to the form as references.
+        https://api.typeform.com/forms/{form_id}
+        """
+        if not self.access_token:
+             return {"error": "Typeform access token not configured in settings."}
+
+        url = f"https://api.typeform.com/forms/{form_id}"
+        
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+        }
+        
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            return {"error": str(e)}
+
+    def sync_form(self, form_id):
+        """
+        Fetches the form definition from Typeform API and updates the local database.
+        Returns the TypeformForm object.
+        """
+        data = self.get_form(form_id)
+        if "error" in data:
+            raise Exception(data["error"])
+
+        from order_page.models import TypeformForm
+
+        # Use the static method on the model
+        return TypeformForm.create_or_update_from_api(data)
+
+    def update_form(self, form_id: str, data: dict):
+        """
+        Updates an existing form.
+        https://api.typeform.com/forms/{form_id}
+        """
+        if not self.access_token:
+             return {"error": "Typeform access token not configured in settings."}
+
+        url = f"https://api.typeform.com/forms/{form_id}"
+        
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = requests.put(url, headers=headers, json=data)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            if e.response is not None:
+                try:
+                    return {"error": e.response.json()}
+                except ValueError:
+                    return {"error": e.response.text}
+            return {"error": str(e)}
+
+
