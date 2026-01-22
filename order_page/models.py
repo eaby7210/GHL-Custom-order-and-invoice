@@ -1262,6 +1262,41 @@ class ModalOption(TimeStampedModel):
         return f"{self.label} ({self.field_type})"
 
 
+class ModalOptionToggle(TimeStampedModel):
+    modal_option = models.ForeignKey(
+        "ModalOption",
+        related_name="toggles",
+        on_delete=models.CASCADE,
+        help_text="The parent modal option this toggle controls."
+    )
+    label = models.CharField(max_length=255)
+    toggle_type = models.CharField(
+        max_length=50,
+        choices=[
+            ("checkbox", "Checkbox"),
+            ("radio", "Radio"),
+        ],
+        default="checkbox"
+    )
+    options = models.JSONField(
+        blank=True,
+        null=True,
+        default=list,
+        help_text='List of options for radio toggles (e.g. ["Yes", "No"]).'
+    )
+    trigger_value = models.CharField(
+        max_length=255,
+        help_text="Value that triggers the visibility of the field (e.g. 'true' or 'Yes')."
+    )
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+
+    def __str__(self):
+        return f"{self.label} ({self.toggle_type})"
+
+
 # -------------------------------------------------------------------
 # Disclosure (Array-based)
 # -------------------------------------------------------------------

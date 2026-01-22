@@ -7,7 +7,8 @@ from .models import (
     IndividualService, ServiceForm, FormItem, OptionGroup,
     OptionItem, Submenu, SubmenuItem, SubmenuPriceChange,
     ModalOption, Disclosure,    BundleOptionGroup,
-    BundleOptionItem,
+    ModalOptionToggle,
+        BundleOptionItem,
         BundleGroup,
         Bundle,
         BundleOptionGroup,
@@ -307,6 +308,14 @@ class SubmenuPriceChangeInline(admin.TabularInline):
     verbose_name_plural = "Linked Form Item Price Modifiers"
 
 
+class ModalOptionToggleInline(admin.TabularInline):
+    model = ModalOptionToggle
+    extra = 1
+    fields = ("label", "toggle_type", "options", "trigger_value", "sort_order")
+    ordering = ("sort_order",)
+
+
+
 
 @admin.register(ModalOption)
 class ModalOptionAdmin(admin.ModelAdmin):
@@ -315,6 +324,7 @@ class ModalOptionAdmin(admin.ModelAdmin):
     search_fields = ("label", "field_name")
     list_filter = ("field_type", "required")
     ordering = ("sort_order",)
+    inlines = [ModalOptionToggleInline]
 
 
 @admin.register(Disclosure)

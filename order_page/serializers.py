@@ -18,7 +18,7 @@ from .models import (
     BundleModalField,
 
     BundleModalForm,
-    DiscountLevel, CheckDiscloure
+    DiscountLevel, CheckDiscloure, ModalOptionToggle
     
     )
 
@@ -292,11 +292,27 @@ class FormItemSerializer(serializers.ModelSerializer):
         return changes or {}
 
 
+
+class ModalOptionToggleSerializer(serializers.ModelSerializer):
+    type = serializers.CharField(source="toggle_type")
+    trigger = serializers.CharField(source="trigger_value")
+    
+    class Meta:
+        model = ModalOptionToggle
+        fields = [
+            "label",
+            "type",
+            "options",
+            "trigger",
+        ]
+
+
 class ModalOptionSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source="field_name")
     type = serializers.CharField(source="field_type")
     valid_item_index = serializers.SerializerMethodField()
     check_disclosure = CheckDiscloureSerializer(many=True, read_only=True)
+    toggles = ModalOptionToggleSerializer(many=True, read_only=True)
 
     class Meta:
         model = ModalOption
@@ -310,7 +326,9 @@ class ModalOptionSerializer(serializers.ModelSerializer):
             "footer_body",
             "required",
             "valid_item_index",
+            "valid_item_index",
             "check_disclosure",
+            "toggles",
         ]
 
     def get_valid_item_index(self, obj):
