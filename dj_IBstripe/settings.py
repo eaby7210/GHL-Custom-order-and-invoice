@@ -56,7 +56,7 @@ TOLT_KEY = config('TOLT_KEY', default=None)
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', '37d5165a4f2b.ngrok-free.app', 'localhost:8000']
+ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', '631de07fb94e.ngrok-free.app', 'localhost:8000']
 
 CORS_ALLOWED_ORIGINS = ['http://localhost:3000','http://localhost:5173','https://go.investorbootz.com']
 

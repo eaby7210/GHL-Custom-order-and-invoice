@@ -1657,6 +1657,10 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
     print(f"discount amount: {discount_amount}")
     
     print(f"Building invoice data structure...")
+    order_status_emails_list = []
+    if order.order_status_emails:
+        order_status_emails_list = order.order_status_emails.split('\n')
+
     invoice_data = {
         "altId": location_id,
         "altType": "location",
@@ -1677,7 +1681,14 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
             "type": "fixed",
             # "validOnProductIds": "[ '6579751d56f60276e5bd4154' ]"
         },
-        "termsNotes": "<p>This is a default terms.</p>",
+        "termsNotes": render_to_string(
+                "invoice_notes.html", 
+                context={
+                    "order":order,
+                    "order_status_emails_list": order_status_emails_list
+                    }
+        ).replace("\n", "").replace('"', "'"),
+    
         "title": f"Invoice -{order.get_service_type_display() if order.service_type !="mixed" else "Bundle+A La Carte"}",
         "contactDetails": {
             "id": contact.get("id"),
@@ -1687,7 +1698,9 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
             "additionalEmails": [],
             "companyName": "",
             "address": address,
-            "customFields": []
+            "customFields": [
+               order.sp_instruction if order.sp_instruction else ""
+            ]
         },
         "invoiceNumber": f"{str(order.stripe_session_id)}",
         "issueDate": now().date().isoformat(),

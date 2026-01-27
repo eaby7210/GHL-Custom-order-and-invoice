@@ -53,7 +53,7 @@ class TypeFormWebhook(APIView):
  
 
             try:
-                print(f'Raw payload {json.dumps(request.data, indent=4)}')
+                # print(f'Raw payload {json.dumps(request.data, indent=4)}')
                 try:
                     payload = request.data
                     # print(f'Recieved Payload {json.dumps(payload, indent=4)}')
