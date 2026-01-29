@@ -107,13 +107,24 @@ class NotaryCreationView(APIView):
             )
             .order_by('-response__submitted_at')
         )
+        print(f"[NotaryCreationView] Time threshold: {time_threshold}")
+        print(f"[NotaryCreationView] Checking answers for email: {email}")
+        
+        # Debug: check if any answers exist for this email regardless of time
+        all_email_answers = TypeformAnswer.objects.filter(answer_type='email', value_text=email).count()
+        print(f"[NotaryCreationView] Total answers for email (all time): {all_email_answers}")
+
+        valid_answers_count = email_answers.count()
+        print(f"[NotaryCreationView] Valid answers count (>= threshold): {valid_answers_count}")
 
         recent_responses = TypeformResponse.objects.filter(
             id__in=email_answers.values_list('response_id', flat=True)
         ).select_related('form').prefetch_related('answers__field')
 
         recent_response = recent_responses.first()
+        recent_response = recent_responses.first()
         if not recent_response:
+            print("[NotaryCreationView] No recent Typeform response found after filtering.")
             return Response({"message": "No recent Typeform response found"}, status=status.HTTP_204_NO_CONTENT)
 
         print(f"Using recent response: {recent_response.id}") #type:ignore
