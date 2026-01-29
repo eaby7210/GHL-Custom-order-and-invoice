@@ -157,6 +157,8 @@ class TypeformForm(models.Model):
                     choice_label = choice.get("label")
                     
                     if choice_ref:
+                        current_choice_refs.append(choice_ref) # Add to list of active refs
+                        
                         # Use manual lookup/create to avoid immediate save() trigger from get_or_create
                         # and to allow setting the recursion guard flag.
                         mapping_obj = TypeformPartnerMapping.objects.filter(
@@ -199,14 +201,23 @@ class TypeformForm(models.Model):
                         
 
                 
-                # Optional: Remove mappings that no longer exist in Typeform?
-                # User didn't strictly ask for this, but it's good practice for "sync".
-                # However, be careful not to delete mappings that might have partner data if the ref changed?
-                # But ref is the identity. If ref is gone, choice is gone.
-                # TypeformPartnerMapping.objects.filter(
-                #     form=form_obj, 
-                #     field=field_obj
-                # ).exclude(choice_ref__in=current_choice_refs).delete()
+                # Delete mappings that are NOT in the current choice refs list
+                # This ensures local DB stays in sync with Typeform definition
+                if current_choice_refs:
+                    stale_mappings = TypeformPartnerMapping.objects.filter(
+                        form=form_obj, 
+                        field=field_obj
+                    ).exclude(choice_ref__in=current_choice_refs)
+                    
+                    if stale_mappings.exists():
+                         print(f"[DEBUG] Deleting {stale_mappings.count()} stale partner mappings for field {field_obj.field_id}")
+                         # Set flag on potential delete? delete() signal might trigger sync?
+                         # The delete() method on model is overridden to sync to Typeform.
+                         # But here we are syncing FROM Typeform.
+                         # If we delete locally because it's gone from Typeform, we DON'T want to trigger a sync back to Typeform (it's already gone).
+                         # We should use queryset delete or set flag? Queryset delete doesn't call model.delete() method, so it bypasses our override!
+                         # Perfect.
+                         stale_mappings.delete()
             
         return form_obj
 

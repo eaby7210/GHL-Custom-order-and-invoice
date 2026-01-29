@@ -61,6 +61,16 @@ class TypeFormWebhook(APIView):
                     return HttpResponseBadRequest("Invalid JSON payload")
                 
                 resp_obj = TypeformParser.save_webhook(payload)
+                
+                # Check for Partner Mappings and update GHL contact
+                email = resp_obj.get_answer_by_title("Email")
+                if email:
+                    from .tasks import ghl_update_contact
+                    print(f"Triggering ghl_update_contact for {email}")
+                    ghl_update_contact(email, resp_obj.id)
+                else:
+                    print("No email found in Typeform response, skipping ghl_update_contact task.")
+
                 return Response({"status": "ok", "response_id": resp_obj.id}, status=status.HTTP_201_CREATED) #type:ignore
 
 
@@ -204,7 +214,7 @@ class NotaryCreationView(APIView):
                     "attr": user_data.get("attr", {}),
                     "last_login_at": user_data.get("last_login_at"),
                     "last_ip": user_data.get("last_ip"),
-                    "last_company_id": user_data.get("last_company_id"),
+                    "last_company_id": user_data.get("last_company_id", company_id),
                     "email_unverified": user_data.get("email_unverified"),
                     "disabled": user_data.get("disabled"),
                     "deleted_at": user_data.get("deleted_at"),

@@ -401,6 +401,32 @@ class ContactServices:
         else:
             raise ContactServiceError(f"API request failed: {response.status_code}")
 
+    @staticmethod
+    def put_contact(location_id, contact_id, data):
+        """
+        Update a contact in GoHighLevel API.
+        Equivalent to PUT /contacts/:contactId
+        """
+        token_obj = OAuthServices.get_valid_access_token_obj(location_id)
+        headers = {
+            "Authorization": f"Bearer {token_obj.access_token}",
+            "Content-Type": "application/json",
+            "Version": API_VERSION,
+        }
+
+        url = f"{BASE_URL}/contacts/{contact_id}"
+        
+        response = requests.put(url, headers=headers, json=data)
+
+        if response.status_code == 200:
+            # Optionally save/sync back to local DB if needed, similar to post_contact
+            if "contact" in response.json():
+                 ContactServices.save_contact(response.json().get("contact"))
+            return response.json()
+        else:
+            print(f"❌ Failed to update contact: {response.status_code} - {response.text}")
+            raise ContactServiceError(f"API request failed: {response.status_code} - {response.text}")
+
 
     
 
