@@ -64,7 +64,8 @@ class FormSubmissionAPIView(APIView):
         if coupon_code:
             coupon:stripe.Coupon |None = get_coupon(coupon_code)
             if coupon:
-                print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off or ${float(coupon.amount_off)/100} off")
+                amount_off_display = f"${float(coupon.amount_off)/100}" if coupon.amount_off else "N/A"
+                print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off or {amount_off_display} off")
             else:
                 print(f"Coupon not found or invalid: {coupon_code}")
         else:
