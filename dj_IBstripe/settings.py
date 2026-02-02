@@ -84,6 +84,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'django_summernote',
     'adminsortable2',
+    'oauth2_provider',
     'core',
     'stripe_payment',
     'order_page',
@@ -91,6 +92,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'oauth2_provider.middleware.OAuth2TokenMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
     'django.middleware.security.SecurityMiddleware',
@@ -104,6 +106,17 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'dj_IBstripe.urls'
+
+REST_FRAMEWORK = {
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.AllowAny',
+    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
+        'rest_framework.authentication.SessionAuthentication',    
+    ),
+
+}
 
 TEMPLATES = [
     {

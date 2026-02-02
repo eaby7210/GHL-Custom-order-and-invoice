@@ -2,10 +2,13 @@ from core.services import OAuthServices
 import requests
 import json, time
 from django.conf import settings
+from requests.exceptions import RequestException
 
-def request_with_retry(url, headers, params=None, max_retries=10, delay=5):
+DEFAULT_TIMEOUT = 30
+
+def request_with_retry(url, headers, params=None, max_retries=10, delay=5, timeout=DEFAULT_TIMEOUT):
     """
-    Performs GET request with automatic retry on status 429.
+    Performs GET request with automatic retry on status 429 and network errors.
     
     Args:
         url (str): Request URL
@@ -13,25 +16,33 @@ def request_with_retry(url, headers, params=None, max_retries=10, delay=5):
         params (dict): Query params
         max_retries (int): Max retry attempts
         delay (int/float): Delay between retries (seconds)
+        timeout (int/float): Request timeout (seconds)
     """
     attempt = 0
 
     while attempt < max_retries:
-        response = requests.get(url, headers=headers, params=params)
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=timeout)
 
-        # success
-        if 200 <= response.status_code < 300:
+            # success
+            if 200 <= response.status_code < 300:
+                return response
+
+            # rate limited → retry
+            if response.status_code == 429:
+                attempt += 1
+                print(f"⚠️ Rate limit hit (429). Retrying in {delay} seconds... [{attempt}/{max_retries}]")
+                time.sleep(delay)
+                continue
+            
+            # other error (5xx) -> maybe retry? For now, we return response if it's not 429 but connected.
             return response
 
-        # rate limited → retry
-        if response.status_code == 429:
+        except RequestException as e:
             attempt += 1
-            print(f"⚠️ Rate limit hit (429). Retrying in {delay} seconds... [{attempt}/{max_retries}]")
+            print(f"⚠️ Request failed: {e}. Retrying in {delay} seconds... [{attempt}/{max_retries}]")
             time.sleep(delay)
             continue
-
-        # other error → stop retrying
-        return response
 
     print("❌ Max retries exceeded for:", url)
     return None
@@ -46,14 +57,18 @@ class InvoiceServices:
     def post_invoice(location_id, data):
         headers = OAuthServices.get_valid_headers(location_id)
         url = "https://services.leadconnectorhq.com/invoices/"
-        response = requests.post(url, headers=headers, json=data)
+        try:
+            response = requests.post(url, headers=headers, json=data, timeout=DEFAULT_TIMEOUT)
 
-        if response.status_code == 201:
-            # print(json.dumps(response.json(),indent=4))
-            # InvoiceServices.save_contact(response.json().get("contact"))
-            return response.json()
-        else:
-            print(f"❌ Failed to create Invoice: {response.status_code} - {response.text}")
+            if response.status_code == 201:
+                # print(json.dumps(response.json(),indent=4))
+                # InvoiceServices.save_contact(response.json().get("contact"))
+                return response.json()
+            else:
+                print(f"❌ Failed to create Invoice: {response.status_code} - {response.text}")
+                return None
+        except RequestException as e:
+            print(f"❌ Exception creating Invoice: {e}")
             return None
     
     @staticmethod
@@ -61,40 +76,52 @@ class InvoiceServices:
         headers = OAuthServices.get_valid_headers(location_id)
         querystring = {"altId":location_id,"altType":"location"}
         url = f"https://services.leadconnectorhq.com/invoices/{invoice_id}"
-        response = requests.get(url, headers=headers, params=querystring)
+        try:
+            response = requests.get(url, headers=headers, params=querystring, timeout=DEFAULT_TIMEOUT)
 
-        if 200 <= response.status_code < 300:
-            print(f"✅ Invoice {invoice_id} retrieved successfully.")
-            # print(json.dumps(response.json(), indent=4))
-            return response.json()
-        else:
-            print(f"❌ Failed to retrieve Invoice {invoice_id}: {response.status_code} - {response.text}")
+            if 200 <= response.status_code < 300:
+                print(f"✅ Invoice {invoice_id} retrieved successfully.")
+                # print(json.dumps(response.json(), indent=4))
+                return response.json()
+            else:
+                print(f"❌ Failed to retrieve Invoice {invoice_id}: {response.status_code} - {response.text}")
+                return None
+        except RequestException as e:
+            print(f"❌ Exception retrieving Invoice {invoice_id}: {e}")
             return None
     
     @staticmethod
     def send_invoice(location_id, invoice_id, data):
         headers = OAuthServices.get_valid_headers(location_id)
         url = f"https://services.leadconnectorhq.com/invoices/{invoice_id}/send"
-        response = requests.post(url, headers=headers, json=data)
+        try:
+            response = requests.post(url, headers=headers, json=data, timeout=DEFAULT_TIMEOUT)
 
-        if 200 <= response.status_code < 300:
-            print(f"✅ Invoice {invoice_id} sent successfully.")
-            return response.json().get("invoice", {})
-        else:
-            print(f"❌ Failed to send Invoice {invoice_id}: {response.status_code} - {response.text}")
+            if 200 <= response.status_code < 300:
+                print(f"✅ Invoice {invoice_id} sent successfully.")
+                return response.json().get("invoice", {})
+            else:
+                print(f"❌ Failed to send Invoice {invoice_id}: {response.status_code} - {response.text}")
+                return None
+        except RequestException as e:
+            print(f"❌ Exception sending Invoice {invoice_id}: {e}")
             return None
 
     @staticmethod
     def record_payment(location_id, invoice_id, data):
         headers = OAuthServices.get_valid_headers(location_id)
         url = f"https://services.leadconnectorhq.com/invoices/{invoice_id}/record-payment"
-        response = requests.post(url, headers=headers, json=data)
+        try:
+            response = requests.post(url, headers=headers, json=data, timeout=DEFAULT_TIMEOUT)
 
-        if 200 <= response.status_code < 300:
-            print(f"✅ Manual payment for Invoice {invoice_id} processed successfully.")
-            return response.json().get("invoice", {})
-        else:
-            print(f"❌ Failed to process manual payment for Invoice {invoice_id}: {response.status_code} - {response.text}")
+            if 200 <= response.status_code < 300:
+                print(f"✅ Manual payment for Invoice {invoice_id} processed successfully.")
+                return response.json().get("invoice", {})
+            else:
+                print(f"❌ Failed to process manual payment for Invoice {invoice_id}: {response.status_code} - {response.text}")
+                return None
+        except RequestException as e:
+            print(f"❌ Exception recording payment for Invoice {invoice_id}: {e}")
             return None
 
 TEST_BASE_URL = "https://dev.notarydash.com"
@@ -186,34 +213,46 @@ class NotaryDashServices:
     def create_order(data):
         url = f"{BASE_URL}/api/v2/orders"
         print("Creating order with data:", json.dumps(data, indent=4))
-        response = requests.post(url, headers=Notary_header, json=data)
-        if response.status_code >= 200 and response.status_code < 300:
-            print("✅ Order created successfully.")
-            return response.json()
-        else:
-            print(f"❌ Failed to create order: {response.status_code} - {response.text}")
+        try:
+            response = requests.post(url, headers=Notary_header, json=data, timeout=DEFAULT_TIMEOUT)
+            if response.status_code >= 200 and response.status_code < 300:
+                print("✅ Order created successfully.")
+                return response.json()
+            else:
+                print(f"❌ Failed to create order: {response.status_code} - {response.text}")
+                return None
+        except RequestException as e:
+            print(f"❌ Exception creating order: {e}")
             return None
         
     @staticmethod
     def create_products(data):
         url = f"{BASE_URL}/api/v2/companies/{data.get("client_id")}/products"
-        response = requests.post(url, headers=Notary_header, json=data)
-        if response.status_code >= 200 and response.status_code < 300:
-            print("✅ Products created successfully.")
-            return response.json()
-        else:
-            print(f"❌ Failed to create products: {response.status_code} - {response.text}")
+        try:
+            response = requests.post(url, headers=Notary_header, json=data, timeout=DEFAULT_TIMEOUT)
+            if response.status_code >= 200 and response.status_code < 300:
+                print("✅ Products created successfully.")
+                return response.json()
+            else:
+                print(f"❌ Failed to create products: {response.status_code} - {response.text}")
+                return None
+        except RequestException as e:
+            print(f"❌ Exception creating products: {e}")
             return None
     
     @staticmethod
     def create_client(data):
         url = f"{BASE_URL}/api/v2/clients"
-        response = requests.post(url, headers=Notary_header, json=data)
-        if response.status_code >= 200 and response.status_code < 300:
-            print("✅ Client created successfully.")
-            return response.json()
-        else:
-            print(f"❌ Failed to create client: {response.status_code} - {response.text}")
+        try:
+            response = requests.post(url, headers=Notary_header, json=data, timeout=DEFAULT_TIMEOUT)
+            if response.status_code >= 200 and response.status_code < 300:
+                print("✅ Client created successfully.")
+                return response.json()
+            else:
+                print(f"❌ Failed to create client: {response.status_code} - {response.text}")
+                return None
+        except RequestException as e:
+            print(f"❌ Exception creating client: {e}")
             return None
 
     @staticmethod
@@ -250,11 +289,15 @@ class NotaryDashServices:
             "Accept": "application/json",
         }
 
-        response = requests.post(url, headers=headers, json=user_data)
+        try:
+            response = requests.post(url, headers=headers, json=user_data, timeout=DEFAULT_TIMEOUT)
 
-        if 200 <= response.status_code < 300:
-            print("✅ Client user created successfully.")
-            return response.json()
-        else:
-            print(f"❌ Failed to create client user: {response.status_code} - {response.text}")
+            if 200 <= response.status_code < 300:
+                print("✅ Client user created successfully.")
+                return response.json()
+            else:
+                print(f"❌ Failed to create client user: {response.status_code} - {response.text}")
+                return None
+        except RequestException as e:
+            print(f"❌ Exception creating client user: {e}")
             return None
