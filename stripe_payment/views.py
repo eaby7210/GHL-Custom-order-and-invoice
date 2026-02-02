@@ -1120,15 +1120,39 @@ def handle_payment_intent_requires_action(event):
             print("ERROR: No order found with this payment intent ID")
             return None
         
-        # Idempotency: If order is already processed (has invoice), skip.
-        if order_obj.invoice_id:
-             print(f"✅ Order {order_obj.id} already processed. Skipping PI requires_action.")
+        # Idempotency: Atomic Lock
+        # Try to update status from pending to processing. 
+        # If rows updated == 0, it means it's not pending (already processing/completed/failed)
+        rows_updated = Order.objects.filter(id=order_obj.id, processing_status="pending").update(processing_status="processing")
+        
+        if rows_updated == 0 and not order_obj.processing_status == "failed": # Allow retry if failed? Or just check status
+             # Refresh from DB to see actual status
+             order_obj.refresh_from_db()
+             print(f"✅ Order {order_obj.id} cannot be locked (Status: {order_obj.processing_status}). Skipping PI requires_action.")
              return None
 
-        process_order(event,order_obj)
+        # Lock acquired, proceed
+        print(f"🔒 Order {order_obj.id} locked for processing.")
+        
+        # We need to refresh object to have new status in memory if we use it, though we don't strictly need it for process_order
+        order_obj.processing_status = "processing" 
+
+        processed = process_order(event,order_obj)
+        
+        if processed:
+            Order.objects.filter(id=order_obj.id).update(processing_status="completed")
+        else:
+            Order.objects.filter(id=order_obj.id).update(processing_status="failed")
         
     except Exception as e:
         print(f"Error in handle_payment_intent_requires_action: {e}")
+        try:
+             # Attempt to mark as failed if we have the order_obj reference
+             if 'order_obj' in locals() and order_obj:
+                 order_obj.processing_status = "failed"
+                 order_obj.save(update_fields=["processing_status"])
+        except:
+            pass
         return None
 
 def handle_checkout_session_completed(event):
@@ -1150,12 +1174,28 @@ def handle_checkout_session_completed(event):
         
         print(f"Order ID: {order_obj.id}, Company ID: {order_obj.company_id}, User ID: {order_obj.user_id}")
         
-        # Determine success of processing
-        processed_successfully = process_order(event, order_obj)
+        # Idempotency: Atomic Lock
+        rows_updated = Order.objects.filter(id=order_obj.id, processing_status="pending").update(processing_status="processing")
         
-        if not processed_successfully:
-             print("ERROR: process_order failed in handle_checkout_session_completed")
-             return None
+        if rows_updated == 0 and not order_obj.processing_status == "failed":
+             # Refresh from DB to see actual status
+             order_obj.refresh_from_db()
+             print(f"✅ Order {order_obj.id} cannot be locked (Status: {order_obj.processing_status}). Skipping Session Completed.")
+             pass
+        else:
+            # Lock acquired
+            print(f"🔒 Order {order_obj.id} locked for processing.")
+            order_obj.processing_status = "processing"
+
+            # Determine success of processing
+            processed_successfully = process_order(event, order_obj)
+            
+            if processed_successfully:
+                 Order.objects.filter(id=order_obj.id).update(processing_status="completed")
+            else:
+                 print("ERROR: process_order failed in handle_checkout_session_completed")
+                 Order.objects.filter(id=order_obj.id).update(processing_status="failed")
+                 return None
 
         # Proceed to update Session object (keeping existing logic for session tracking)
     

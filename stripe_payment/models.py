@@ -203,7 +203,15 @@ class Order(models.Model):
             contact_last_name_resched=data.get("contact_last_name_resched"),
             contact_phone_resched=data.get("contact_phone_resched")
         )
-    
+
+    PROCESSING_STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("processing", "Processing"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+    ]
+    processing_status = models.CharField(max_length=20, choices=PROCESSING_STATUS_CHOICES, default="pending")
+
 class Bundle(models.Model):
     """Each bundle in an order"""
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="bundles")
