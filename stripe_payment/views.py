@@ -1118,6 +1118,12 @@ def handle_payment_intent_requires_action(event):
         if not order_obj:
             print("ERROR: No order found with this payment intent ID")
             return None
+        
+        # Idempotency: If order is already processed (has invoice), skip.
+        if order_obj.invoice_id:
+             print(f"✅ Order {order_obj.id} already processed. Skipping PI requires_action.")
+             return None
+
         process_order(event,order_obj)
         
     except Exception as e:
@@ -1193,6 +1199,14 @@ def process_order(event,order_obj):
     try:
         company_id = order_obj.company_id
         user_id = order_obj.user_id
+
+        # --- IDEMPOTENCY CHECK ---
+        # If the order already has an invoice_id, it means it has been processed.
+        # We return True to indicate "success" (already handled) and prevent duplicate work.
+        if order_obj.invoice_id:
+            print(f"✅ Order {order_obj.id} already processed (Invoice ID: {order_obj.invoice_id}). Skipping duplicate processing.")
+            return True
+        # -------------------------
         
         print("Calling NotaryDashServices.get_client_one_user...")
         client_user = NotaryDashServices.get_client_one_user(company_id, user_id)
@@ -1327,6 +1341,8 @@ def process_order(event,order_obj):
             print("⚠️ No payment_intent ID found in session")
         from stripe_payment.tasks import process_tos_for_ghl
         process_tos_for_ghl(order_obj.user_id,contact_data["id"])
+
+        return True # Explicitly return True on success
     
     except Exception as e:
         print(f"ERROR in handle_checkout_session_completed: {str(e)}")
