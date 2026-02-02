@@ -6,7 +6,7 @@ from stripe_payment.models import (
     Coupon, Order,ALaCarteService,
     
 )
-from decimal import Decimal
+
 import json
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -37,7 +37,11 @@ def create_stripe_customer(company_name, email=None, metadata=None):
         customer = stripe.Customer.create(**customer_data)
         print(f"✅ Created Stripe Customer: {customer.id} for {company_name}")
         return customer
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout creating Customer: {e}")
+        return None
     except Exception as e:
+
         print(f"❌ Error creating Stripe Customer: {e}")
         return None
 
@@ -53,6 +57,9 @@ def apply_coupon_to_customer(customer_id, coupon_id):
         )
         print(f"✅ Applied coupon {coupon_id} to customer {customer_id}")
         return True
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout applying coupon: {e}")
+        return False
     except Exception as e:
         print(f"❌ Error applying coupon to customer: {e}")
         return False
@@ -209,9 +216,15 @@ def create_stripe_session(order: Order, domain, customer_id=None):
     else:
         session_params["customer_creation"] = "always"
     # print("Creating Stripe session with line items:", json.dumps(line_items, indent=4))
-    session = stripe.checkout.Session.create(**session_params)
-
-    return session
+    try:
+        session = stripe.checkout.Session.create(**session_params)
+        return session
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout creating Session: {e}")
+        raise e
+    except Exception as e:
+        print(f"❌ Error creating Stripe Session: {e}")
+        raise e
 
 
 def get_coupon_by_promo_code(code)-> stripe_coupon |None:
@@ -249,6 +262,9 @@ def get_coupon_by_promo_code(code)-> stripe_coupon |None:
                 
             return None
         return None
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout retrieving promotion code: {e}")
+        return None
     except stripe.StripeError as e:
         print(f"Stripe error while retrieving promotion code: {e}")
         return None
@@ -274,6 +290,9 @@ def sync_stripe_coupons():
                     'valid': sc.get('valid', True),
                 }
             )
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout syncing coupons: {e}")
+        raise e
     except stripe.StripeError as e:
         print("Stripe error while syncing coupons:", e)
         raise
@@ -289,6 +308,9 @@ def get_coupon(user_coupon_code)->stripe_coupon | None:
             print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
             return coupon
 
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout retrieving coupon: {e}")
+        return None
     except Exception as e:
         print(f"Error during coupon retrieval: {e}")
         return None
@@ -303,6 +325,9 @@ def list_payment_methods(customer_id):
             type="card"
         )
         return methods.data
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout listing payment methods: {e}")
+        return []
     except Exception as e:
         print(f"Error listing payment methods: {e}")
         return []
@@ -317,6 +342,9 @@ def attach_payment_method(payment_method_id, customer_id):
             customer=customer_id,
         )
         return True
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout attaching payment method: {e}")
+        raise e
     except stripe.InvalidRequestError as e:
         if "No such PaymentMethod" in str(e):
              print(f"Payment method not found (possibly cross-account issue): {e}")
@@ -338,6 +366,9 @@ def set_default_payment_method(customer_id, payment_method_id):
             invoice_settings={"default_payment_method": payment_method_id}
         )
         return True
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout setting default payment method: {e}")
+        raise e
     except Exception as e:
         print(f"Error setting default payment method: {e}")
         raise e
@@ -352,11 +383,14 @@ def create_stripe_setup_intent(customer_id):
             payment_method_types=["card"],
         )
         return intent
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout creating SetupIntent: {e}")
+        return None
     except Exception as e:
         print(f"Error creating setup intent: {e}")
         return None
 
-        return None
+
 
 
 def create_payment_intent(amount, currency, customer_id, payment_method_id, metadata=None, order=None, frontend_domain=None):
@@ -383,21 +417,31 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
         final_metadata["line_items"] = items_str
         final_metadata["order_id"] = str(order.id) # Ensure order_id is present
 
-    intent = stripe.PaymentIntent.create(
-        amount=amount,
-        currency=currency,
-        customer=customer_id,
-        payment_method=payment_method_id,
-        off_session=True,
-        confirm=True,
-        capture_method='manual',
-        metadata=final_metadata
-    )
-    
-    # Determine Redirect URL
-    redirect_url = None
-    
-    if order and frontend_domain:
+    try:
+        intent = stripe.PaymentIntent.create(
+            amount=amount,
+            currency=currency,
+            customer=customer_id,
+            payment_method=payment_method_id,
+            off_session=True,
+            confirm=True,
+            capture_method='manual',
+            metadata=final_metadata
+        )
+        
+        # Determine Redirect URL
+        redirect_url = None
+        
+        if order and frontend_domain:
             redirect_url = f"{frontend_domain}?status=success&payment_intent_id={intent.id}&client_id={order.user_id}"
 
-    return intent, redirect_url
+        return intent, redirect_url
+
+    except stripe.error.TimeoutError as e:
+        print(f"❌ Stripe Timeout creating PaymentIntent: {e}")
+        return None, None
+    except Exception as e:
+        print(f"❌ Error creating PaymentIntent: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
