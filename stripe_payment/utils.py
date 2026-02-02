@@ -15,13 +15,12 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 # Set a timeout for all Stripe requests to prevent Gunicorn worker hangs.
 # Default Gunicorn timeout is often 30s. We set Stripe timeout to 20s to fail before the worker is killed.
 # stripe.max_network_retries = 10
-# try:
-#     if not hasattr(stripe, 'http_client'):
-#         import stripe.http_client
-#     httpClient = stripe.http_client.RequestsClient(timeout=60) 
-#     stripe.default_http_client = httpClient
-# except Exception as e:
-#     print(f"⚠️ Could not set custom Stripe timeout: {e}")
+try:
+    from stripe._http_client import RequestsClient
+    httpClient = RequestsClient(timeout=60) 
+    stripe.default_http_client = httpClient
+except Exception as e:
+    print(f"⚠️ Could not set custom Stripe timeout: {e}")
 # ================================
 
 def create_stripe_customer(company_name, email=None, metadata=None):
