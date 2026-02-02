@@ -11,6 +11,14 @@ import json
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+# === CONFIGURE STRIPE TIMEOUT ===
+# Set a timeout for all Stripe requests to prevent Gunicorn worker hangs.
+# Default Gunicorn timeout is often 30s. We set Stripe timeout to 20s to fail before the worker is killed.
+stripe.max_network_retries = 10
+httpClient = stripe.http_client.RequestsClient(timeout=60) 
+stripe.default_http_client = httpClient
+# ================================
+
 def create_stripe_customer(company_name, email=None, metadata=None):
     """
     Creates a Stripe customer.
@@ -175,6 +183,7 @@ def create_stripe_session(order: Order, domain, customer_id=None):
         
         "payment_intent_data": {
             "capture_method": "manual",
+            "setup_future_usage": "off_session",
             "metadata": {
                 "_id": str(order.id), # type: ignore
                 "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else ""  ,
@@ -197,8 +206,8 @@ def create_stripe_session(order: Order, domain, customer_id=None):
 
     if customer_id:
         session_params["customer"] = customer_id
-        session_params["payment_intent_data"]["setup_future_usage"] = "off_session"
-
+    else:
+        session_params["customer_creation"] = "always"
     # print("Creating Stripe session with line items:", json.dumps(line_items, indent=4))
     session = stripe.checkout.Session.create(**session_params)
 
