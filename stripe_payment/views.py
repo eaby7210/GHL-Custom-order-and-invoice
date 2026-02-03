@@ -1160,6 +1160,7 @@ def handle_payment_intent_requires_action(event):
 def handle_checkout_session_completed(event):
     print("=== HANDLE_CHECKOUT_SESSION_COMPLETED STARTED ===")
     print(f"Event received: {event.get('type', 'Unknown')}")
+    print(f"Payment Intent ID: {event.get('data', {}).get('object', {}).get('payment_intent')}")
     
     try:
         obj = event['data']['object']
