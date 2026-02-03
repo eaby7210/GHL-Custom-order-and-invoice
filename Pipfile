@@ -23,6 +23,7 @@ stripe = "*"
 django-summernote = "*"
 django-admin-sortable2 = "*"
 django-oauth-toolkit = "*"
+requests-unixsocket = "*"
 
 [dev-packages]
 

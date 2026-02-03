@@ -51,8 +51,12 @@ if NOTARY_TEST:
 else:
     NOTARY_API_KEY = config('NOTARY_LIVE_API_KEY')
 
+
 TYPEFORM_ACCESS_TOKEN = config('TYPEFORM_ACCESS_TOKEN', default=None)
 TOLT_KEY = config('TOLT_KEY', default=None)
+
+KEAP_SOCKET_PATH = config('KEAP_SOCKET_PATH', default='/home/ubuntu/keap-notary-sync/keap.sock')
+KEAP_HTTP_URL = config('KEAP_HTTP_URL', default='http://localhost:5000')
 
 DEBUG = True
 

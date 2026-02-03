@@ -430,3 +430,52 @@ class ContactServices:
 
     
 
+
+try:
+    import requests_unixsocket
+except ImportError:
+    requests_unixsocket = None
+
+class KeapSocketService:
+    @staticmethod
+    def send_data(endpoint, data):
+        """
+        Send data to Keap Sync Service via Unix Socket or HTTP fallback.
+        Endpoint: relative path, e.g. "sync-order"
+        """
+        socket_path = settings.KEAP_SOCKET_PATH
+        http_url = settings.KEAP_HTTP_URL
+
+        # 1. Check if socket exists
+        if os.path.exists(socket_path):
+            if requests_unixsocket is None:
+                print("❌ requests-unixsocket not installed, but socket found. Cannot use socket.")
+                return None
+            
+            # Prepare session
+            session = requests_unixsocket.Session()
+            # Encode path for URL scheme: http+unix://%2Fpath%2Fto%2Fsocket/endpoint
+            # Note: The slashes in the path must be URL-encoded.
+            encoded_path = requests.utils.quote(socket_path, safe='')
+            url = f"http+unix://{encoded_path}/{endpoint}"
+            
+            print(f"🔌 Sending to Unix Socket: {url}")
+            try:
+                response = session.post(url, json=data)
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                print(f"❌ Socket Request Failed: {e}")
+                return {"error": str(e)}
+
+        else:
+            # 2. Fallback to HTTP
+            url = f"{http_url}/{endpoint}"
+            print(f"🌐 Socket not found ({socket_path}). Fallback to HTTP: {url}")
+            try:
+                response = requests.post(url, json=data)
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                print(f"❌ HTTP Request Failed: {e}")
+                return {"error": str(e)}

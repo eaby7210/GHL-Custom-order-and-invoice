@@ -366,6 +366,10 @@ class InvoiceView(APIView):
             token_obj = OAuthServices.get_valid_access_token_obj()
             order = Order.objects.get(stripe_session_id=stripe_session_id)
             response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+            
+            if not response:
+                return self._handle_response(request, {"error": "Invoice not found"}, status.HTTP_404_NOT_FOUND)
+
             if order.notary_order_id:
                 response["notary_order_id"]= order.notary_order_id
             response["primary_contact_firstname"]= order.contact_first_name_sched
@@ -373,9 +377,6 @@ class InvoiceView(APIView):
             response["preferred_time"] = order.preferred_datetime
             response["accepted_at"] = order.accepted_at
             response["preferred_timezone"] = order.preferred_timezone if order.preferred_timezone else None
-
-            if not response:
-                return self._handle_response(request, {"error": "Invoice not found"}, status.HTTP_404_NOT_FOUND)
 
             return self._handle_response(request, response, status.HTTP_200_OK)
 
@@ -1513,7 +1514,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
                 "parent_id": prd.get("id") if prd_response else None,
                 "name": prd.get("name") if prd_response else prd_name,
                 "pay_to_notary": prd.get("pay_to_notary", 0) if prd_response else 0,
-                "charge_client": prd.get("charge_client", order.total_price+order.order_protection_price) if prd_response else order.total_price+order.order_protection_price,
+                "charge_client": prd.get("charge_client", float(order.total_price or 0) + float(order.order_protection_price or 0)) if prd_response else float(order.total_price or 0) + float(order.order_protection_price or 0),
                 "scanbacks_required": True
             },
             "attr": {
