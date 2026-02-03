@@ -726,12 +726,12 @@ def stripe_webhook(request):
             evt_log.processed = True
             evt_log.save()
             
-            # Expire the session
-            try:
-                stripe.checkout.Session.expire(data_object.get("id"))
-                print("✅ Session expired successfully")
-            except Exception as e:
-                print(f"❌ Failed to expire session: {e}")
+            # Expire the session - Removed because session is already completed
+            # try:
+            #     stripe.checkout.Session.expire(data_object.get("id"))
+            #     print("✅ Session expired successfully")
+            # except Exception as e:
+            #     print(f"❌ Failed to expire session: {e}")
             
             return HttpResponse(status=500)
         else:
@@ -1111,6 +1111,7 @@ def handle_payment_intent_requires_action(event):
     try:
         obj = event['data']['object']
         payment_intent_id = obj["id"]
+        print(f"Event received: {event.get('type', 'Unknown')}")
         print(f"Payment Intent ID: {payment_intent_id}")
         
         order_obj = Order.objects.filter(stripe_intent_id=payment_intent_id).first()
