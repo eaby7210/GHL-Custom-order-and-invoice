@@ -735,26 +735,27 @@ def stripe_webhook(request):
             
             return HttpResponse(status=500)
         else:
-            print("✅ Session processed successfully, attempting to capture payment...")
-            try:
-                if payment_indent_id:
-                    stripe.PaymentIntent.capture(payment_indent_id)
-                    print("✅ Payment captured successfully")
-                else:
-                    print("⚠️ No payment intent ID found")
-                
-                evt_log.error_message = "No errors"
-                evt_log.processed = True
-                evt_log.save()
-                print("✅ Event log saved successfully")
-                
-            except StripeError as e:
-                msg = e.user_message or str(e)
-                print(f"❌ Payment capture failed: {msg}")
-                evt_log.error_message = msg
-                evt_log.processed = True
-                evt_log.save()
-                return HttpResponse(status=500)
+            print("✅ Session processed successfully.")
+            # Duplicate capture logic removed. Capture is handled in process_order.
+            # try:
+            #     if payment_indent_id:
+            #         stripe.PaymentIntent.capture(payment_indent_id)
+            #         print("✅ Payment captured successfully")
+            #     else:
+            #         print("⚠️ No payment intent ID found")
+            
+            evt_log.error_message = "No errors"
+            evt_log.processed = True
+            evt_log.save()
+            print("✅ Event log saved successfully")
+            
+            # except StripeError as e:
+            #     msg = e.user_message or str(e)
+            #     print(f"❌ Payment capture failed: {msg}")
+            #     evt_log.error_message = msg
+            #     evt_log.processed = True
+            #     evt_log.save()
+            #     return HttpResponse(status=500)
             
             return HttpResponse(status=200)
     
