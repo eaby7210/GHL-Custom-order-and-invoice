@@ -465,7 +465,10 @@ class KeapSocketService:
                 response.raise_for_status()
                 return response.json()
             except Exception as e:
-                print(f"❌ Socket Request Failed: {e}")
+                if 'response' in locals() and hasattr(response, 'text'):
+                     print(f"❌ Socket Request Failed: {e} - Response Body: {response.text}")
+                else:
+                    print(f"❌ Socket Request Failed: {e}")
                 return {"error": str(e)}
 
         else:

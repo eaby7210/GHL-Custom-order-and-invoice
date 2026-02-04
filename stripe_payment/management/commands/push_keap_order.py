@@ -28,9 +28,11 @@ class Command(BaseCommand):
         # If user didn't specify endpoint, we'll use root or a default.
         # Let's assume the receiving service listens on root or specific path.
         # Using 'order' as endpoint for now.
-        response = KeapSocketService.send_data("order", data)
+        print(f"DEBUG: Payload being sent:\n{json.dumps(data, indent=2)}")
+        
+        response = KeapSocketService.send_data("unix-test/", data)
         
         if response and "error" not in response:
             self.stdout.write(self.style.SUCCESS(f'Successfully pushed order. Response: {response}'))
         else:
-            self.stdout.write(self.style.ERROR(f'Failed to push order. Response: {response}'))
+             self.stdout.write(self.style.ERROR(f'Failed to push order. Response: {response}'))
