@@ -49,7 +49,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "lock_box_location", "access_app_lock_box", "access_meet_contact",
             "access_hidden_key", "hidden_key_directions", "access_community_access",
             "community_access_instructions", "access_door_code", "door_code_value",
-            "preferred_datetime", "contact_name_sched", "contact_phone_sched",
+            "preferred_datetime", "contact_first_name_sched", "contact_last_name_sched", "contact_phone_sched",
             "contact_email_sched", "accepted_at", "tbd", "stripe_session_id",
             "created_at","invoice_id", "a_la_carte_services"
         ]
