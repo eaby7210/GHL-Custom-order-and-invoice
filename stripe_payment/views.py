@@ -17,7 +17,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from .serializer import OrderSerializer, NotaryUserSerializer, NotaryClientCompanySerializer
-from core.services import OAuthServices, ContactServices
+from core.services import OAuthServices, ContactServices, KeapSocketService
 from core.models import Contact, OAuthToken
 from django.utils.dateparse import parse_datetime
 from decimal import Decimal
@@ -1549,6 +1549,11 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
         order_id_num = str(ord_response.get("data", {}).get("order_id"))
         order.notary_order_id = order_id_num
         print(f"SUCCESS: Notary order created with ID: {order_id}")
+        keap_response = KeapSocketService.send_data("gsync/unix-test/", ord_response)
+        if keap_response and "error" not in keap_response:
+            print(f"SUCCESS: Sending to Keap successful")
+        else:
+            print(f"ERROR: Sending to Keap failed")
         inv_data["invoiceNumber"] = order_id
         print(f"Updated inv_data with invoiceNumber: {order_id}")
         print(f"=== BUILD NOTARY ORDER DEBUG END (SUCCESS) ===")
