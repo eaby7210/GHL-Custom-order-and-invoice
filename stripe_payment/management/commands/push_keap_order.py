@@ -30,7 +30,7 @@ class Command(BaseCommand):
         # Using 'order' as endpoint for now.
         print(f"DEBUG: Payload being sent:\n{json.dumps(data, indent=2)}")
         
-        response = KeapSocketService.send_data("unix-test/", data)
+        response = KeapSocketService.send_data("gsync/unix-test/", data)
         
         if response and "error" not in response:
             self.stdout.write(self.style.SUCCESS(f'Successfully pushed order. Response: {response}'))
