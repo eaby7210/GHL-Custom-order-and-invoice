@@ -1542,7 +1542,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
     print(f"Calling NotaryDashServices.create_order...")
     
     ord_response = NotaryDashServices.create_order(notary_order)
-    # print(f"Order creation response: {ord_response}")
+    print(f"Order creation response: {json.dumps(ord_response, indent=2)}")
 
     if ord_response and ord_response.get("data"):
         order_id = str(ord_response.get("data", {}).get("id"))
