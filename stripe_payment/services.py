@@ -4,7 +4,7 @@ import json, time
 from django.conf import settings
 from requests.exceptions import RequestException
 
-DEFAULT_TIMEOUT = 30
+DEFAULT_TIMEOUT = 25
 
 def request_with_retry(url, headers, params=None, max_retries=10, delay=5, timeout=DEFAULT_TIMEOUT):
     """

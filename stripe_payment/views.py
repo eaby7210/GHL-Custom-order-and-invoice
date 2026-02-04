@@ -1208,6 +1208,12 @@ def handle_checkout_session_completed(event):
         print(f"Exception type: {type(e).__name__}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
+        
+        # CRITICAL FIX: Release the lock by setting status to 'failed'
+        if 'order_obj' in locals() and order_obj:
+            print(f"⚠️ An exception occurred. Resetting processing_status for Order {order_obj.id} to 'failed'.")
+            Order.objects.filter(id=order_obj.id).update(processing_status="failed")
+            
         return None
     
     print("Creating/updating CheckoutSession...")
