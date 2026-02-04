@@ -32,8 +32,7 @@ class ALaCarteServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = ALaCarteService
         fields = [
-            "id", "key", "name", "price", "description", "prompt",
-            "total_price", "addons_price", "submenu_input", "addons", "submenu"
+            "id", "service_id", "title", "subtitle", "form_title", "form_description"
         ]
 
 
