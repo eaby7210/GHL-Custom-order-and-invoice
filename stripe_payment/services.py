@@ -6,7 +6,7 @@ from requests.exceptions import RequestException
 
 DEFAULT_TIMEOUT = 25
 
-def request_with_retry(url, headers, params=None, max_retries=10, delay=5, timeout=DEFAULT_TIMEOUT):
+def request_with_retry(url, headers, params=None, max_retries=5, delay=30, timeout=DEFAULT_TIMEOUT):
     """
     Performs GET request with automatic retry on status 429 and network errors.
     
@@ -15,7 +15,7 @@ def request_with_retry(url, headers, params=None, max_retries=10, delay=5, timeo
         headers (dict): Request headers
         params (dict): Query params
         max_retries (int): Max retry attempts
-        delay (int/float): Delay between retries (seconds)
+        delay (int/float): Initial delay between retries (seconds). Increases exponentially.
         timeout (int/float): Request timeout (seconds)
     """
     attempt = 0
@@ -31,8 +31,9 @@ def request_with_retry(url, headers, params=None, max_retries=10, delay=5, timeo
             # rate limited → retry
             if response.status_code == 429:
                 attempt += 1
-                print(f"⚠️ Rate limit hit (429). Retrying in {delay} seconds... [{attempt}/{max_retries}]")
-                time.sleep(delay)
+                wait_time = min(delay * (2 ** (attempt - 1)), 120)
+                print(f"⚠️ Rate limit hit (429). Retrying in {wait_time} seconds... [{attempt}/{max_retries}]")
+                time.sleep(wait_time)
                 continue
             
             # other error (5xx) -> maybe retry? For now, we return response if it's not 429 but connected.
@@ -40,8 +41,52 @@ def request_with_retry(url, headers, params=None, max_retries=10, delay=5, timeo
 
         except RequestException as e:
             attempt += 1
-            print(f"⚠️ Request failed: {e}. Retrying in {delay} seconds... [{attempt}/{max_retries}]")
-            time.sleep(delay)
+            wait_time = min(delay * (2 ** (attempt - 1)), 120)
+            print(f"⚠️ Request failed: {e}. Retrying in {wait_time} seconds... [{attempt}/{max_retries}]")
+            time.sleep(wait_time)
+            continue
+
+    print("❌ Max retries exceeded for:", url)
+    return None
+
+def post_with_retry(url, headers, json_data=None, max_retries=5, delay=30, timeout=DEFAULT_TIMEOUT):
+    """
+    Performs POST request with automatic retry on status 429 and network errors.
+    
+    Args:
+        url (str): Request URL
+        headers (dict): Request headers
+        json_data (dict): JSON payload
+        max_retries (int): Max retry attempts
+        delay (int/float): Initial delay between retries (seconds). Increases exponentially.
+        timeout (int/float): Request timeout (seconds)
+    """
+    attempt = 0
+
+    while attempt < max_retries:
+        try:
+            response = requests.post(url, headers=headers, json=json_data, timeout=timeout)
+
+            # success
+            if 200 <= response.status_code < 300:
+                return response
+
+            # rate limited → retry
+            if response.status_code == 429:
+                attempt += 1
+                wait_time = min(delay * (2 ** (attempt - 1)), 120)
+                print(f"⚠️ Rate limit hit (429). Retrying in {wait_time} seconds... [{attempt}/{max_retries}]")
+                time.sleep(wait_time)
+                continue
+            
+            # other error (5xx) -> maybe retry? For now, we return response if it's not 429 but connected.
+            return response
+
+        except RequestException as e:
+            attempt += 1
+            wait_time = min(delay * (2 ** (attempt - 1)), 120)
+            print(f"⚠️ Request failed: {e}. Retrying in {wait_time} seconds... [{attempt}/{max_retries}]")
+            time.sleep(wait_time)
             continue
 
     print("❌ Max retries exceeded for:", url)
@@ -213,47 +258,41 @@ class NotaryDashServices:
     def create_order(data):
         url = f"{BASE_URL}/api/v2/orders"
         # print("Creating order with data:", json.dumps(data, indent=4, default=str))
-        try:
-            response = requests.post(url, headers=Notary_header, json=data, timeout=DEFAULT_TIMEOUT)
-            if response.status_code >= 200 and response.status_code < 300:
-                print("✅ Order created successfully.")
-                return response.json()
-            else:
-                print(f"❌ Failed to create order: {response.status_code} - {response.text}")
-                return None
-        except RequestException as e:
-            print(f"❌ Exception creating order: {e}")
-            return None
+        
+        response = post_with_retry(url, headers=Notary_header, json_data=data)
+
+        if response and 200 <= response.status_code < 300:
+            print("✅ Order created successfully.")
+            return response.json()
+        
+        print(f"❌ Failed to create order: {response.status_code if response else 'No Response'} - {response.text if response else ''}")
+        return None
         
     @staticmethod
     def create_products(data):
-        url = f"{BASE_URL}/api/v2/companies/{data.get("client_id")}/products"
-        try:
-            response = requests.post(url, headers=Notary_header, json=data, timeout=DEFAULT_TIMEOUT)
-            if response.status_code >= 200 and response.status_code < 300:
-                print("✅ Products created successfully.")
-                return response.json()
-            else:
-                print(f"❌ Failed to create products: {response.status_code} - {response.text}")
-                return None
-        except RequestException as e:
-            print(f"❌ Exception creating products: {e}")
-            return None
+        url = f"{BASE_URL}/api/v2/companies/{data.get('client_id')}/products"
+        
+        response = post_with_retry(url, headers=Notary_header, json_data=data)
+
+        if response and 200 <= response.status_code < 300:
+            print("✅ Products created successfully.")
+            return response.json()
+
+        print(f"❌ Failed to create products: {response.status_code if response else 'No Response'} - {response.text if response else ''}")
+        return None
     
     @staticmethod
     def create_client(data):
         url = f"{BASE_URL}/api/v2/clients"
-        try:
-            response = requests.post(url, headers=Notary_header, json=data, timeout=DEFAULT_TIMEOUT)
-            if response.status_code >= 200 and response.status_code < 300:
-                print("✅ Client created successfully.")
-                return response.json()
-            else:
-                print(f"❌ Failed to create client: {response.status_code} - {response.text}")
-                return None
-        except RequestException as e:
-            print(f"❌ Exception creating client: {e}")
-            return None
+        
+        response = post_with_retry(url, headers=Notary_header, json_data=data)
+
+        if response and 200 <= response.status_code < 300:
+            print("✅ Client created successfully.")
+            return response.json()
+
+        print(f"❌ Failed to create client: {response.status_code if response else 'No Response'} - {response.text if response else ''}")
+        return None
 
     @staticmethod
     def create_client_user(client_id: str, user_data: dict):
@@ -290,14 +329,15 @@ class NotaryDashServices:
         }
 
         try:
-            response = requests.post(url, headers=headers, json=user_data, timeout=DEFAULT_TIMEOUT)
+            response = post_with_retry(url, headers=headers, json_data=user_data)
 
-            if 200 <= response.status_code < 300:
+            if response and 200 <= response.status_code < 300:
                 print("✅ Client user created successfully.")
                 return response.json()
-            else:
-                print(f"❌ Failed to create client user: {response.status_code} - {response.text}")
-                return None
-        except RequestException as e:
+            
+            print(f"❌ Failed to create client user: {response.status_code if response else 'No Response'} - {response.text if response else ''}")
+            return None
+        except Exception as e:
+            # post_with_retry catches RequestException, so this might catch other unexpected errors
             print(f"❌ Exception creating client user: {e}")
             return None
