@@ -1580,7 +1580,7 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
     print(f"Order service_type: {order.service_type}")
     print(f"Location ID: {location_id}")
     # print(f"Contact: {contact}")
-    print(f"Event obj: {json.dumps(event_obj, indent=2)}")
+    # print(f"Event obj: {json.dumps(event_obj, indent=2)}")
     # print(f"Client user: {client_user}")
 
     def build_item(name, description, price, currency="USD", qty=1):
