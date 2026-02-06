@@ -1555,6 +1555,15 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
         order_id_num = str(ord_response.get("data", {}).get("order_id"))
         order.notary_order_id = order_id_num
         print(f"SUCCESS: Notary order created with ID: {order_id}")
+
+        # Trigger Order Created Signal (Decoupled)
+        from .signals import notary_order_created
+        notary_order_created.send(
+            sender=order.__class__, 
+            notary_order=notary_order,
+            order_response=ord_response
+        )
+
         keap_response = KeapSocketService.send_data("gsync/unix-test/", ord_response)
         if keap_response and "error" not in keap_response:
             print(f"SUCCESS: Sending to Keap successful")

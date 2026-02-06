@@ -89,11 +89,14 @@ INSTALLED_APPS = [
     'django_summernote',
     'adminsortable2',
     'oauth2_provider',
+    'webhooks',
     'core',
     'stripe_payment',
     'order_page',
     'tolt',
 ]
+
+OAUTH2_PROVIDER_APPLICATION_MODEL = 'oauth2_provider.Application'
 
 MIDDLEWARE = [
     'oauth2_provider.middleware.OAuth2TokenMiddleware',

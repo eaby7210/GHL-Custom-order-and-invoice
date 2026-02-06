@@ -1,9 +1,9 @@
 from django.apps import AppConfig
 
 
-class CoreConfig(AppConfig):
+class WebhooksConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'core'
+    name = 'webhooks'
 
     def ready(self):
-        import core.signals
+        import webhooks.signals
