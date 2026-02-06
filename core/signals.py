@@ -6,6 +6,7 @@ from stripe_payment.serializer import OrderSerializer
 from webhooks.services import dispatch_webhook_event
 from stripe_payment.models import NotaryClientCompany, NotaryUser
 from stripe_payment.serializer import NotaryClientCompanySerializer, NotaryUserSerializer
+from webhooks.constants import WebhookEventKeys
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,8 @@ def handle_notary_order_created(sender, notary_order, order_response, **kwargs):
         **order_response,
     }
     logger.info("Core received notary_order_created signal, dispatching webhook.")
-    dispatch_webhook_event("notary_order.creating_payload", payload)
-    dispatch_webhook_event("notary_order.created_res", order_res_payload)
+    dispatch_webhook_event(WebhookEventKeys.NOTARY_ORDER_CREATED, payload)
+    dispatch_webhook_event(WebhookEventKeys.NOTARY_ORDER_CREATED, order_res_payload)
 
 
 @receiver(pre_save, sender=Order)
@@ -43,9 +44,9 @@ def order_pre_save(sender, instance, **kwargs):
 def order_post_save(sender, instance, created, **kwargs):
     event_name = None
     if created:
-        event_name = "order.created"
+        event_name = WebhookEventKeys.ORDER_CREATED
     elif hasattr(instance, '_old_processing_status') and instance._old_processing_status != instance.processing_status:
-        event_name = f"order.{instance.processing_status}"
+        event_name = WebhookEventKeys.get_order_event(instance.processing_status)
     
     if event_name:
         try:
@@ -60,7 +61,7 @@ def order_post_save(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=NotaryClientCompany)
 def notary_company_post_save(sender, instance, created, **kwargs):
-    event_name = "notary_client_company.created" if created else "notary_client_company.updated"
+    event_name = WebhookEventKeys.NOTARY_CLIENT_COMPANY_CREATED if created else WebhookEventKeys.NOTARY_CLIENT_COMPANY_UPDATED
     try:
         serializer = NotaryClientCompanySerializer(instance)
         payload = serializer.data
@@ -71,7 +72,7 @@ def notary_company_post_save(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=NotaryUser)
 def notary_user_post_save(sender, instance, created, **kwargs):
-    event_name = "notary_user.created" if created else "notary_user.updated"
+    event_name = WebhookEventKeys.NOTARY_USER_CREATED if created else WebhookEventKeys.NOTARY_USER_UPDATED
     try:
         serializer = NotaryUserSerializer(instance)
         payload = serializer.data
