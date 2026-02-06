@@ -3,7 +3,6 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     FormSubmissionAPIView, stripe_webhook,
     OrderRetrieveView, notary_view, stripe_coupon, test_email_template,
-    OrderRetrieveView, notary_view, stripe_coupon, test_email_template,
     create_setup_intent, save_payment_method, set_default_card,
     retrieve_invoice_by_payment_intent, InvoiceView, CompanyAdminView,
     CompanyUserListView, CompanyPaymentMethodsView

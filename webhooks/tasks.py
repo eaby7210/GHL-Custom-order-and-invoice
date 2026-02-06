@@ -5,24 +5,37 @@ from celery import shared_task
 from .models import WebhookEndpoint, WebhookEvent, WebhookLog
 from .utils import generate_signature
 import logging
+from dateutil.parser import parse
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+
 @shared_task(bind=True, max_retries=5)
 def send_webhook(self, endpoint_id, event_name, payload):
+    # Extract timestamp from payload if available
+
+
+    created_at = timezone.now()
     try:
         endpoint = WebhookEndpoint.objects.get(id=endpoint_id)
         event = WebhookEvent.objects.get(name=event_name)
     except (WebhookEndpoint.DoesNotExist, WebhookEvent.DoesNotExist):
         logger.warning(f"Endpoint {endpoint_id} or Event {event_name} not found.")
         return
+    if 'created_at' in payload:
+        try:
+            created_at = parse(payload['created_at'])
+        except (ValueError, TypeError):
+            pass
 
     # Create initial pending log
     log = WebhookLog.objects.create(
         endpoint=endpoint,
         event=event,
         payload=payload,
-        status='PENDING'
+        status='PENDING',
+        created_at=created_at
     )
 
     headers = {

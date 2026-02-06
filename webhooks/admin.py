@@ -1,6 +1,6 @@
 
 from django.contrib import admin
-from .models import WebhookEvent, WebhookEndpoint
+from .models import WebhookEvent, WebhookEndpoint, WebhookLog
 
 @admin.register(WebhookEvent)
 class WebhookEventAdmin(admin.ModelAdmin):

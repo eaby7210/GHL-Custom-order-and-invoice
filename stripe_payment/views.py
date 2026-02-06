@@ -32,6 +32,7 @@ from .utils import (
     apply_coupon_to_customer
 )
 from .services import InvoiceServices, NotaryDashServices
+from .serializer import OrderSerializer
 import stripe
 # from stripe.error import SignatureVerificationError
 from stripe._error import SignatureVerificationError, StripeError
@@ -620,7 +621,16 @@ def stripe_coupon(request, coupon_code):
         else:
             return Response({"error": "Coupon not found or invalid"}, status=status.HTTP_404_NOT_FOUND)
     return Response({"error": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
-      
+
+@api_view(['GET'])
+def test_serializers(request, order_id):
+    try:
+        order = Order.objects.get(id=order_id)
+        serializer = OrderSerializer(order)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    except Order.DoesNotExist:
+        return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+
 @csrf_exempt
 def stripe_webhook(request):
     print("=== STRIPE WEBHOOK RECEIVED ===")
@@ -1850,7 +1860,17 @@ def record_payment(invoice_data):
 
 
 class OrderRetrieveView(viewsets.GenericViewSet, mixins.RetrieveModelMixin):
-    queryset = Order.objects.prefetch_related('a_la_carte_services').all()
+    queryset = Order.objects.prefetch_related(
+        'a_la_carte_services',
+        'a_la_carte_services__items',
+        'a_la_carte_services__items__options',
+        'a_la_carte_services__items__submenu_items',
+        'a_la_carte_services__items__modal_options',
+        'a_la_carte_services__items__disclosures',
+        'bundles',
+        'bundles__options',
+        'bundles__modal_options'
+    ).all()
     serializer_class = OrderSerializer
     lookup_field = "stripe_session_id"
 

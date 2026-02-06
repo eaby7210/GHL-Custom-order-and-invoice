@@ -1,6 +1,7 @@
 
 from .models import WebhookEndpoint, WebhookEvent
 from .tasks import send_webhook
+import logging
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
