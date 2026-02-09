@@ -30,7 +30,12 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR('Invalid JSON payload'))
             return
 
-
+        # Ensure event exists or create it for testing
+        event, created = WebhookEvent.objects.get_or_create(
+            name=event_name
+        )
+        if created:
+            self.stdout.write(self.style.WARNING(f"Created new event '{event_name}'"))
         
         # Check for active endpoints
         endpoints = WebhookEndpoint.objects.filter(events=event, is_active=True)
