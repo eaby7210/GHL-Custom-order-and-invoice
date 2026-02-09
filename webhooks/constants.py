@@ -1,4 +1,6 @@
 class WebhookEventKeys:
+
+    TEST_EVENT = "test.event"
     # Notary Order Events
     NOTARY_ORDER_CREATED = "notary_dash.order_created"
     
@@ -12,8 +14,8 @@ class WebhookEventKeys:
     ORDER_FAILED = "order.failed"
     
     # Notary Client Company Events
-    NOTARY_CLIENT_COMPANY_CREATED = "notary_client_company.created"
-    NOTARY_CLIENT_COMPANY_UPDATED = "notary_client_company.updated"
+    NOTARY_CLIENT_COMPANY_CREATED = "notary_dash.client_company_created"
+    NOTARY_CLIENT_COMPANY_UPDATED = "notary_dash.client_company_updated"
     
     # Notary User Events
     NOTARY_USER_CREATED = "notary_dash.user_created"
@@ -35,4 +37,5 @@ WEBHOOK_EVENT_DESCRIPTIONS = {
     WebhookEventKeys.NOTARY_CLIENT_COMPANY_UPDATED: "Triggered when a Notary Client Company details are updated.",
     WebhookEventKeys.NOTARY_USER_CREATED: "Triggered when a new Notary User is created.",
     WebhookEventKeys.NOTARY_USER_UPDATED: "Triggered when a Notary User details are updated.",
+    WebhookEventKeys.TEST_EVENT:"Test Event."
 }

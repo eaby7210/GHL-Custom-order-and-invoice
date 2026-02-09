@@ -6,6 +6,9 @@ from .models import WebhookEvent, WebhookEndpoint, WebhookLog
 class WebhookEventAdmin(admin.ModelAdmin):
     list_display = ('name', 'description', 'updated_at')
     search_fields = ('name',)
+    readonly_fields = ('name', 'description', 'updated_at')
+    def has_add_permission(self, request):
+        return False
 
 @admin.register(WebhookEndpoint)
 class WebhookEndpointAdmin(admin.ModelAdmin):

@@ -160,22 +160,25 @@ if config('DB', default="") == 'psql':
             }
         } 
 else:
-    # DATABASES = {
-    #     'default': {
-    #         'ENGINE': 'django.db.backends.sqlite3',
-    #         'NAME': BASE_DIR / 'db.sqlite3',
-    #     }
-    # }
     DATABASES = {
         'default': {
-            'ENGINE': config('DB_ENGINE'),
-            'NAME': config('DB_NAME'),
-            'HOST': config('DB_HOST'),
-            'USER': config('DB_USER'),
-            'PASSWORD': config('DB_PASSWORD'),
-            'port': config('DB_PORT')
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+            'OPTIONS': {
+                'timeout': 60,
+            }
         }
-    } 
+    }
+    # DATABASES = {
+    #     'default': {
+    #         'ENGINE': config('DB_ENGINE'),
+    #         'NAME': config('DB_NAME'),
+    #         'HOST': config('DB_HOST'),
+    #         'USER': config('DB_USER'),
+    #         'PASSWORD': config('DB_PASSWORD'),
+    #         'port': config('DB_PORT')
+    #     }
+    # } 
 STATIC_ROOT = BASE_DIR / "static"
 
 

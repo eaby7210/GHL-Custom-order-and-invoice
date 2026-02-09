@@ -1153,9 +1153,11 @@ def handle_payment_intent_requires_action(event):
         processed = process_order(event,order_obj)
         
         if processed:
-            Order.objects.filter(id=order_obj.id).update(processing_status="completed")
+            order_obj.processing_status = "completed"
+            order_obj.save(update_fields=["processing_status"])
         else:
-            Order.objects.filter(id=order_obj.id).update(processing_status="failed")
+            order_obj.processing_status = "failed"
+            order_obj.save(update_fields=["processing_status"])
         
     except Exception as e:
         print(f"Error in handle_payment_intent_requires_action: {e}")
@@ -1205,10 +1207,12 @@ def handle_checkout_session_completed(event):
             processed_successfully = process_order(event, order_obj)
             
             if processed_successfully:
-                 Order.objects.filter(id=order_obj.id).update(processing_status="completed")
+                 order_obj.processing_status = "completed"
+                 order_obj.save(update_fields=["processing_status"])
             else:
                  print("ERROR: process_order failed in handle_checkout_session_completed")
-                 Order.objects.filter(id=order_obj.id).update(processing_status="failed")
+                 order_obj.processing_status = "failed"
+                 order_obj.save(update_fields=["processing_status"])
                  return None
 
         # Proceed to update Session object (keeping existing logic for session tracking)
@@ -1222,7 +1226,8 @@ def handle_checkout_session_completed(event):
         # CRITICAL FIX: Release the lock by setting status to 'failed'
         if 'order_obj' in locals() and order_obj:
             print(f"⚠️ An exception occurred. Resetting processing_status for Order {order_obj.id} to 'failed'.")
-            Order.objects.filter(id=order_obj.id).update(processing_status="failed")
+            order_obj.processing_status = "failed"
+            order_obj.save(update_fields=["processing_status"])
             
         return None
     
@@ -1495,7 +1500,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
     print(f"Calling NotaryDashServices.create_products...")
     prd_response = NotaryDashServices.create_products(notary_product)
     
-    print(f"Product creation response: {prd_response}")
+    # print(f"Product creation response: {prd_response}")
     if prd_response:
         prd = prd_response.get("data", None)
         # print(f"prd: {json.dumps(prd, indent=4)}")
@@ -1558,7 +1563,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
     print(f"Calling NotaryDashServices.create_order...")
     
     ord_response = NotaryDashServices.create_order(notary_order)
-    print(f"Order creation response: {json.dumps(ord_response, indent=2)}")
+    # print(f"Order creation response: {json.dumps(ord_response, indent=2)}")
 
     if ord_response and ord_response.get("data"):
         order_id = str(ord_response.get("data", {}).get("id"))

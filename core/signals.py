@@ -25,7 +25,7 @@ def handle_notary_order_created(sender, notary_order, order_response, **kwargs):
         **order_response,
     }
     logger.info("Core received notary_order_created signal, dispatching webhook.")
-    dispatch_webhook_event(WebhookEventKeys.NOTARY_ORDER_CREATED, payload)
+    # dispatch_webhook_event(WebhookEventKeys.NOTARY_ORDER_CREATED, payload)
     dispatch_webhook_event(WebhookEventKeys.NOTARY_ORDER_CREATED, order_res_payload)
 
 
@@ -45,11 +45,18 @@ def order_post_save(sender, instance, created, **kwargs):
     event_name = None
     if created:
         event_name = WebhookEventKeys.ORDER_CREATED
+        print(f"SIGNAL:Order created")
     elif hasattr(instance, '_old_processing_status') and instance._old_processing_status != instance.processing_status:
+        print(f"SIGNAL:Order status changed from {instance._old_processing_status} to {instance.processing_status}")
         event_name = WebhookEventKeys.get_order_event(instance.processing_status)
+    else:
+        # Status didn't change. This is normal when updating other fields.
+        print(f"SIGNAL: no change {instance.processing_status} and {instance._old_processing_status}")
+        logger.debug(f"Order saved without status change. Status: {instance.processing_status}")
     
     if event_name:
         try:
+            print(f"")
             serializer = OrderSerializer(instance)
             payload = serializer.data
             logger.info(f"Dispatching webhook {event_name} for order {instance.id}")

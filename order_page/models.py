@@ -820,6 +820,7 @@ class Bundle(TimeStampedModel):
     base_price = models.DecimalField(max_digits=10, decimal_places=2)
     discounted_price = models.DecimalField(max_digits=10, decimal_places=2)
     is_active = models.BooleanField(default=True)
+    min_lead_time = models.SmallIntegerField(default=0,verbose_name="Minimum Lead Time (in hours)")
     sort_order = models.PositiveIntegerField(default=0)
 
     option_groups = models.ManyToManyField(
@@ -1018,6 +1019,7 @@ class FormItem(TimeStampedModel):
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     base_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     protection_invalid = models.BooleanField(default=False)
+    min_lead_time = models.SmallIntegerField(default=0,verbose_name="Minimum Lead Time (in hours)")
     sort_order = models.PositiveIntegerField(default=0)
     option_group = models.OneToOneField(
         "OptionGroup",

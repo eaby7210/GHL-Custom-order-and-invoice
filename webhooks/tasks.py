@@ -43,7 +43,7 @@ def send_webhook(self, endpoint_id, event_name, payload):
         'X-Webhook-Event': event_name,
         'X-Hub-Signature': generate_signature(endpoint.secret, payload)
     }
-
+    logger.info(f"Sending webhook to {endpoint.target_url} for event {event_name} with headers: {headers}")
     try:
         response = requests.post(
             endpoint.target_url,
