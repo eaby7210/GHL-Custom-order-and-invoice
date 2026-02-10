@@ -135,7 +135,7 @@ class BundleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Bundle
-        fields = ["name", "description", "basePrice", "price", "options",  "modalForm", ]
+        fields = ["name", "description", "basePrice","min_lead_time", "price", "options",  "modalForm", ]
 
     def get_options(self, obj):
         """
@@ -267,6 +267,7 @@ class FormItemSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "subtitle",
+            "min_lead_time",
             "price",
             "basePrice",
             "protectionInvalid",
