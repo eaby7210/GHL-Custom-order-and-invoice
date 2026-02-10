@@ -19,6 +19,7 @@ class WebhookEndpoint(models.Model):
     target_url = models.URLField(help_text="URL where the webhook will be delivered.")
     events = models.ManyToManyField(WebhookEvent, related_name='endpoints')
     secret = models.CharField(max_length=64, blank=True, help_text="Signing secret for verifying the payload")
+    headers = models.JSONField(default=dict, blank=True, help_text="Custom JSON headers to include in the webhook request.")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
