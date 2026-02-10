@@ -99,7 +99,7 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = [
             "id", "unit_type", "address", "streetAddress", "city", "state",
-            "postal_code", "unit", "service_type", 
+            "postal_code", "unit", "service_type", "number_of_units",
             # Bundled service fields
             # "bundle_group", "bundle_item", 
             "bundles",

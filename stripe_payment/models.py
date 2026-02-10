@@ -28,6 +28,7 @@ class Order(models.Model):
     city = models.CharField(max_length=100, null=True, blank=True)
     state = models.CharField(max_length=100, null=True, blank=True)
     postal_code = models.CharField(max_length=20, null=True, blank=True)
+    number_of_units = models.IntegerField(null=True, blank=True)
 
     unit = models.CharField(max_length=100,null=True, blank=True)
     service_type = models.CharField(max_length=20, choices=SERVICE_TYPE_CHOICES)
@@ -143,6 +144,7 @@ class Order(models.Model):
             streetAddress = data.get("street"),
             tbd=tbd,
             unit=unit,
+            number_of_units=data.get("numberOfUnits"),
             service_type=service_type,
             accepted_at=accepted_at,
             preferred_datetime=preferred_datetime,
