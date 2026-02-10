@@ -689,26 +689,36 @@ def stripe_webhook(request):
     if event_type == 'charge.succeeded':
         print("Processing charge.succeeded...")
         handle_charge_succeeded(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200)
         
     elif event_type == 'charge.failed':
         print("Processing charge.failed...")
         handle_charge_failed(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200)
         
     elif event_type == 'charge.refunded':
         print("Processing charge.refunded...")
         handle_charge_refunded(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200)
         
     elif event_type == 'charge.updated':
         print("Processing charge.updated...")
         handle_charge_updated(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200)
     
     elif event_type == 'payment_intent.amount_capturable_updated':
         print("---- Processing payment_intent.requires_action...")
         handle_payment_intent_requires_action(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200) 
 
     # elif event_type == 'payment_intent.succeeded':
@@ -1411,7 +1421,7 @@ def process_order(event,order_obj):
         return True # Explicitly return True on success
     
     except Exception as e:
-        print(f"ERROR in handle_checkout_session_completed: {str(e)}")
+        print(f"ERROR in process_order: {str(e)}")
         print(f"Exception type: {type(e).__name__}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
