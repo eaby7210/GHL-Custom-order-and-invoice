@@ -7,9 +7,14 @@ from .views import (
     retrieve_invoice_by_payment_intent, InvoiceView, CompanyAdminView,
     CompanyUserListView, CompanyPaymentMethodsView
 )
+from .m2m_views import (
+    NotaryClientCompanyM2MViewSet, NotaryUserM2MViewSet
+)
 
 router = DefaultRouter()
 router.register(r'orders', OrderRetrieveView, basename='order')
+router.register(r'companies', NotaryClientCompanyM2MViewSet, basename='m2m-company')
+router.register(r'users', NotaryUserM2MViewSet, basename='m2m-user')
 
 urlpatterns = [
     path("submit-order/", FormSubmissionAPIView.as_view(), name="submit-order"),
@@ -25,6 +30,7 @@ urlpatterns = [
     path("company-admin/", CompanyAdminView.as_view(), name="company-admin"),
     path("company-users/", CompanyUserListView.as_view(), name="company-users"),
     path("company-payment-methods/", CompanyPaymentMethodsView.as_view(), name="company-payment-methods"),
+    
     path('', include(router.urls)),
 ]
 
