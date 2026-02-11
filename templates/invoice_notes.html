@@ -1,0 +1,139 @@
+
+<ul>
+  {% for bundle in order.bundles.all %}
+    <li>
+      <strong>{{ bundle.name }}</strong><br />
+      {% if bundle.modal_options.all %} 
+        <ul>
+        {% for modal_option in bundle.modal_options.all %}
+           <li>{{ modal_option.name }}: {{ modal_option.value }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    </li>
+  {% endfor %}
+
+  {% for service in order.a_la_carte_services.all %}
+ 
+      {% for item in service.items.all %}
+        <li>
+         <strong> {{ item.title }}</strong>
+
+
+          {% if item.modal_options.all %} 
+            <ul>
+            {% for modal_option in item.modal_options.all %}
+               <li>{{ modal_option.name }}: {{ modal_option.value }}</li>
+            {% endfor %}
+            </ul>
+          {% endif %}
+        {% if item.disclosures.all %}
+            <br/>
+            Agreed Disclosures:
+            <ul>
+            {% for disclosure in item.disclosures.all %}
+               {% if disclosure.value %}
+               <li>{{ disclosure.name }}</li>
+               {% endif %}
+            {% endfor %}
+            </ul>
+          {% endif %}
+        </li>
+      {% endfor %}
+
+  {% endfor %}
+
+
+</ul>
+
+
+{# Occupancy & Access section #}
+<p><strong> Occupancy Status: </strong>
+  {% if order.occupancy_vacant %}
+  Vacant
+  {% elif order.occupancy_occupied %}
+    {% if order.occupancy_status == "owner_occupied" %}
+      Owner Occupied
+    {% elif order.occupancy_status == "tenant_occupied" %}
+      Tenant Occupied
+    {% else %}
+      Occupied
+    {% endif %}
+  {%else%}
+    Not specified
+  {%endif%}
+</p>
+
+
+
+<p><strong>Appointment Status:</strong> 
+  {% if order.appointment_confirmed %}
+    Confirmed
+  {% else %}
+    Not Confirmed
+  {% endif %}
+</p>
+
+{% if order.rescheduling_option %}
+  <p><strong>Rescheduling Preferences:</strong> {{ order.rescheduling_option|title }}<br/>
+    {% if order.contact_first_name_resched or order.contact_last_name_resched %}
+        Contact: {{ order.contact_first_name_resched }} {{ order.contact_last_name_resched }}<br/>
+    {% endif %}
+    {% if order.contact_phone_resched %}
+        Phone: {{ order.contact_phone_resched }}
+    {% endif %}
+  </p>
+{% endif %}
+
+<p><strong>Access Options:</strong></p>
+<ul>
+  {% if order.access_lock_box %}
+    <li>Lock Box<br/>
+      {% if order.lock_box_code %} (Code: {{ order.lock_box_code }}){% endif %}
+      {% if order.lock_box_location %}<br>Location: {{ order.lock_box_location }}{% endif %}
+    </li>
+  {% endif %}
+  {% if order.access_app_lock_box %}
+    <li>App Lock Box - Yes<br/>
+       {% if order.app_lock_link %} App Link: {{ order.app_lock_link }} {% endif %}
+    </li>
+  {% endif %}
+
+  {% if order.access_hidden_key %}
+    <li>Hidden Key
+      {% if order.hidden_key_directions %}<br>Directions: {{ order.hidden_key_directions }}{% endif %}
+    </li>
+  {% endif %}
+  {% if order.access_community_access %}
+    <li>Community Access
+      {% if order.community_access_instructions %}<br>Instructions: {{ order.community_access_instructions }}{% endif %}
+    </li>
+  {% endif %}
+  {% if order.access_door_code %}
+    <li>Door Code
+      {% if order.door_code_value %} (Code: {{ order.door_code_value }}){% endif %}
+    </li>
+  {% endif %}
+  {% if not order.access_lock_box and not order.access_app_lock_box and not order.access_meet_contact and not order.access_hidden_key and not order.access_community_access and not order.access_door_code %}
+    <li><em>No access options specified</em></li>
+  {% endif %}
+</ul>
+{# Special Instructions Section #}
+
+{% if order.sp_instruction %}
+  <p><strong>Special Instructions for Order:</strong></p>
+  <p style='margin-left: 1em;'>{{ order.sp_instruction|linebreaksbr }}</p>
+{% endif %}
+
+
+
+{% if order_status_emails_list %}
+  <p><strong>Order Status Updates (Participants):</strong></p>
+  <ul>
+    {% for email in order_status_emails_list %}
+      {% if email %}
+       <li>{{ email }}</li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+{% endif %}

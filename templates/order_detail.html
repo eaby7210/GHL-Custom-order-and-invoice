@@ -16,6 +16,10 @@
   {%endif%}
 </p>
 
+{% if order.number_of_units %}
+<p><strong>Number of units:</strong> {{ order.number_of_units }}</p>
+{% endif %}
+
 {% if order.point_of_contact != "me" %}
   <p><strong>Point Of Contact Type:</strong> {{ order.point_of_contact|title }}</p>
 {% endif %}
@@ -86,10 +90,7 @@
   <p style='margin-left: 1em;'>{{ order.sp_instruction|linebreaksbr }}</p>
 {% endif %}
 
-{% if invoice_data.termsNotes %}
-  <p><strong>Terms &amp; Notes:</strong></p>
-  {{ invoice_data.termsNotes|safe }}
-{% endif %}
+
 
 <p><strong>Transaction ID:</strong> {{transaction.transaction_id}}</p>
 

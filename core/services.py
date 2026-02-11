@@ -401,6 +401,84 @@ class ContactServices:
         else:
             raise ContactServiceError(f"API request failed: {response.status_code}")
 
+    @staticmethod
+    def put_contact(location_id, contact_id, data):
+        """
+        Update a contact in GoHighLevel API.
+        Equivalent to PUT /contacts/:contactId
+        """
+        token_obj = OAuthServices.get_valid_access_token_obj(location_id)
+        headers = {
+            "Authorization": f"Bearer {token_obj.access_token}",
+            "Content-Type": "application/json",
+            "Version": API_VERSION,
+        }
+
+        url = f"{BASE_URL}/contacts/{contact_id}"
+        
+        response = requests.put(url, headers=headers, json=data)
+
+        if response.status_code == 200:
+            # Optionally save/sync back to local DB if needed, similar to post_contact
+            if "contact" in response.json():
+                 ContactServices.save_contact(response.json().get("contact"))
+            return response.json()
+        else:
+            print(f"❌ Failed to update contact: {response.status_code} - {response.text}")
+            raise ContactServiceError(f"API request failed: {response.status_code} - {response.text}")
+
 
     
 
+
+try:
+    import requests_unixsocket
+except ImportError:
+    requests_unixsocket = None
+
+class KeapSocketService:
+    @staticmethod
+    def send_data(endpoint, data):
+        """
+        Send data to Keap Sync Service via Unix Socket or HTTP fallback.
+        Endpoint: relative path, e.g. "sync-order"
+        """
+        socket_path = settings.KEAP_SOCKET_PATH
+        http_url = settings.KEAP_HTTP_URL
+
+        # 1. Check if socket exists
+        if os.path.exists(socket_path):
+            if requests_unixsocket is None:
+                print("❌ requests-unixsocket not installed, but socket found. Cannot use socket.")
+                return None
+            
+            # Prepare session
+            session = requests_unixsocket.Session()
+            # Encode path for URL scheme: http+unix://%2Fpath%2Fto%2Fsocket/endpoint
+            # Note: The slashes in the path must be URL-encoded.
+            encoded_path = requests.utils.quote(socket_path, safe='')
+            url = f"http+unix://{encoded_path}/{endpoint}"
+            
+            print(f"🔌 Sending to Unix Socket: {url}")
+            try:
+                response = session.post(url, json=data)
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                if 'response' in locals() and hasattr(response, 'text'):
+                     print(f"❌ Socket Request Failed: {e} - Response Body: {response.text}")
+                else:
+                    print(f"❌ Socket Request Failed: {e}")
+                return {"error": str(e)}
+
+        else:
+            # 2. Fallback to HTTP
+            url = f"{http_url}/{endpoint}"
+            print(f"🌐 Socket not found ({socket_path}). Fallback to HTTP: {url}")
+            try:
+                response = requests.post(url, json=data)
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                print(f"❌ HTTP Request Failed: {e}")
+                return {"error": str(e)}

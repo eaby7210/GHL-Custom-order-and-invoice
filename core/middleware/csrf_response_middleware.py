@@ -3,6 +3,7 @@ import json
 from django.conf import settings
 from django.middleware.csrf import get_token
 from django.utils.deprecation import MiddlewareMixin
+from oauth2_provider.models import AccessToken
 
 DEFAULT_FIELD = "csrfToken"
 DEFAULT_HEADER = "X-CSRFToken"
@@ -26,16 +27,19 @@ class CsrfInjectMiddleware(MiddlewareMixin):
     def process_request(self, request):
         # Guarantee the token exists and cookie will be set by Django.
         # get_token will return existing token or create a new one.
+        if request.headers.get('Authorization', '').startswith('Bearer '):
+            return None
         try:
             _ = get_token(request)
         except Exception:
-            # fail silently - anything that can break token generation shouldn't
-            # block normal request handling
+
             pass
         return None
 
     def process_response(self, request, response):
         # Always attach token header if available
+        if hasattr(request, 'auth') and isinstance(request.auth, AccessToken):
+            return response
         try:
             token = get_token(request)
         except Exception:

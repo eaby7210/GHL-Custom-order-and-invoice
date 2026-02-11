@@ -17,7 +17,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from .serializer import OrderSerializer, NotaryUserSerializer, NotaryClientCompanySerializer
-from core.services import OAuthServices, ContactServices
+from core.services import OAuthServices, ContactServices, KeapSocketService
 from core.models import Contact, OAuthToken
 from django.utils.dateparse import parse_datetime
 from decimal import Decimal
@@ -32,6 +32,7 @@ from .utils import (
     apply_coupon_to_customer
 )
 from .services import InvoiceServices, NotaryDashServices
+from .serializer import OrderSerializer
 import stripe
 # from stripe.error import SignatureVerificationError
 from stripe._error import SignatureVerificationError, StripeError
@@ -64,7 +65,8 @@ class FormSubmissionAPIView(APIView):
         if coupon_code:
             coupon:stripe.Coupon |None = get_coupon(coupon_code)
             if coupon:
-                print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off or ${float(coupon.amount_off)/100} off")
+                amount_off_display = f"${float(coupon.amount_off)/100}" if coupon.amount_off else "N/A"
+                print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off or {amount_off_display} off")
             else:
                 print(f"Coupon not found or invalid: {coupon_code}")
         else:
@@ -365,6 +367,10 @@ class InvoiceView(APIView):
             token_obj = OAuthServices.get_valid_access_token_obj()
             order = Order.objects.get(stripe_session_id=stripe_session_id)
             response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+            
+            if not response:
+                return self._handle_response(request, {"error": "Invoice not found"}, status.HTTP_404_NOT_FOUND)
+
             if order.notary_order_id:
                 response["notary_order_id"]= order.notary_order_id
             response["primary_contact_firstname"]= order.contact_first_name_sched
@@ -372,9 +378,6 @@ class InvoiceView(APIView):
             response["preferred_time"] = order.preferred_datetime
             response["accepted_at"] = order.accepted_at
             response["preferred_timezone"] = order.preferred_timezone if order.preferred_timezone else None
-
-            if not response:
-                return self._handle_response(request, {"error": "Invoice not found"}, status.HTTP_404_NOT_FOUND)
 
             return self._handle_response(request, response, status.HTTP_200_OK)
 
@@ -618,7 +621,16 @@ def stripe_coupon(request, coupon_code):
         else:
             return Response({"error": "Coupon not found or invalid"}, status=status.HTTP_404_NOT_FOUND)
     return Response({"error": "Method not allowed"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
-      
+
+@api_view(['GET'])
+def test_serializers(request, order_id):
+    try:
+        order = Order.objects.get(id=order_id)
+        serializer = OrderSerializer(order)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    except Order.DoesNotExist:
+        return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+
 @csrf_exempt
 def stripe_webhook(request):
     print("=== STRIPE WEBHOOK RECEIVED ===")
@@ -677,26 +689,36 @@ def stripe_webhook(request):
     if event_type == 'charge.succeeded':
         print("Processing charge.succeeded...")
         handle_charge_succeeded(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200)
         
     elif event_type == 'charge.failed':
         print("Processing charge.failed...")
         handle_charge_failed(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200)
         
     elif event_type == 'charge.refunded':
         print("Processing charge.refunded...")
         handle_charge_refunded(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200)
         
     elif event_type == 'charge.updated':
         print("Processing charge.updated...")
         handle_charge_updated(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200)
     
     elif event_type == 'payment_intent.amount_capturable_updated':
         print("---- Processing payment_intent.requires_action...")
         handle_payment_intent_requires_action(event)
+        evt_log.processed = True
+        evt_log.save()
         return HttpResponse(status=200) 
 
     # elif event_type == 'payment_intent.succeeded':
@@ -725,35 +747,36 @@ def stripe_webhook(request):
             evt_log.processed = True
             evt_log.save()
             
-            # Expire the session
-            try:
-                stripe.checkout.Session.expire(data_object.get("id"))
-                print("✅ Session expired successfully")
-            except Exception as e:
-                print(f"❌ Failed to expire session: {e}")
+            # Expire the session - Removed because session is already completed
+            # try:
+            #     stripe.checkout.Session.expire(data_object.get("id"))
+            #     print("✅ Session expired successfully")
+            # except Exception as e:
+            #     print(f"❌ Failed to expire session: {e}")
             
             return HttpResponse(status=500)
         else:
-            print("✅ Session processed successfully, attempting to capture payment...")
-            try:
-                if payment_indent_id:
-                    stripe.PaymentIntent.capture(payment_indent_id)
-                    print("✅ Payment captured successfully")
-                else:
-                    print("⚠️ No payment intent ID found")
-                
-                evt_log.error_message = "No errors"
-                evt_log.processed = True
-                evt_log.save()
-                print("✅ Event log saved successfully")
-                
-            except StripeError as e:
-                msg = e.user_message or str(e)
-                print(f"❌ Payment capture failed: {msg}")
-                evt_log.error_message = msg
-                evt_log.processed = True
-                evt_log.save()
-                return HttpResponse(status=500)
+            print("✅ Session processed successfully.")
+            # Duplicate capture logic removed. Capture is handled in process_order.
+            # try:
+            #     if payment_indent_id:
+            #         stripe.PaymentIntent.capture(payment_indent_id)
+            #         print("✅ Payment captured successfully")
+            #     else:
+            #         print("⚠️ No payment intent ID found")
+            
+            evt_log.error_message = "No errors"
+            evt_log.processed = True
+            evt_log.save()
+            print("✅ Event log saved successfully")
+            
+            # except StripeError as e:
+            #     msg = e.user_message or str(e)
+            #     print(f"❌ Payment capture failed: {msg}")
+            #     evt_log.error_message = msg
+            #     evt_log.processed = True
+            #     evt_log.save()
+            #     return HttpResponse(status=500)
             
             return HttpResponse(status=200)
     
@@ -1110,6 +1133,7 @@ def handle_payment_intent_requires_action(event):
     try:
         obj = event['data']['object']
         payment_intent_id = obj["id"]
+        print(f"Event received: {event.get('type', 'Unknown')}")
         print(f"Payment Intent ID: {payment_intent_id}")
         
         order_obj = Order.objects.filter(stripe_intent_id=payment_intent_id).first()
@@ -1118,15 +1142,48 @@ def handle_payment_intent_requires_action(event):
         if not order_obj:
             print("ERROR: No order found with this payment intent ID")
             return None
-        process_order(event,order_obj)
+        
+        # Idempotency: Atomic Lock
+        # Try to update status from pending to processing. 
+        # If rows updated == 0, it means it's not pending (already processing/completed/failed)
+        rows_updated = Order.objects.filter(id=order_obj.id, processing_status="pending").update(processing_status="processing")
+        
+        if rows_updated == 0 and not order_obj.processing_status == "failed": # Allow retry if failed? Or just check status
+             # Refresh from DB to see actual status
+             order_obj.refresh_from_db()
+             print(f"✅ Order {order_obj.id} cannot be locked (Status: {order_obj.processing_status}). Skipping PI requires_action.")
+             return None
+
+        # Lock acquired, proceed
+        print(f"🔒 Order {order_obj.id} locked for processing.")
+        
+        # We need to refresh object to have new status in memory if we use it, though we don't strictly need it for process_order
+        order_obj.processing_status = "processing" 
+
+        processed = process_order(event,order_obj)
+        
+        if processed:
+            order_obj.processing_status = "completed"
+            order_obj.save(update_fields=["processing_status"])
+        else:
+            order_obj.processing_status = "failed"
+            order_obj.save(update_fields=["processing_status"])
         
     except Exception as e:
         print(f"Error in handle_payment_intent_requires_action: {e}")
+        try:
+             # Attempt to mark as failed if we have the order_obj reference
+             if 'order_obj' in locals() and order_obj:
+                 order_obj.processing_status = "failed"
+                 order_obj.save(update_fields=["processing_status"])
+        except:
+            pass
         return None
 
 def handle_checkout_session_completed(event):
     print("=== HANDLE_CHECKOUT_SESSION_COMPLETED STARTED ===")
     print(f"Event received: {event.get('type', 'Unknown')}")
+    print(f"Payment Intent ID: {event.get('data', {}).get('object', {}).get('payment_intent')}")
     
     try:
         obj = event['data']['object']
@@ -1143,12 +1200,30 @@ def handle_checkout_session_completed(event):
         
         print(f"Order ID: {order_obj.id}, Company ID: {order_obj.company_id}, User ID: {order_obj.user_id}")
         
-        # Determine success of processing
-        processed_successfully = process_order(event, order_obj)
+        # Idempotency: Atomic Lock
+        rows_updated = Order.objects.filter(id=order_obj.id, processing_status="pending").update(processing_status="processing")
         
-        if not processed_successfully:
-             print("ERROR: process_order failed in handle_checkout_session_completed")
-             return None
+        if rows_updated == 0 and not order_obj.processing_status == "failed":
+             # Refresh from DB to see actual status
+             order_obj.refresh_from_db()
+             print(f"✅ Order {order_obj.id} cannot be locked (Status: {order_obj.processing_status}). Skipping Session Completed.")
+             pass
+        else:
+            # Lock acquired
+            print(f"🔒 Order {order_obj.id} locked for processing.")
+            order_obj.processing_status = "processing"
+
+            # Determine success of processing
+            processed_successfully = process_order(event, order_obj)
+            
+            if processed_successfully:
+                 order_obj.processing_status = "completed"
+                 order_obj.save(update_fields=["processing_status"])
+            else:
+                 print("ERROR: process_order failed in handle_checkout_session_completed")
+                 order_obj.processing_status = "failed"
+                 order_obj.save(update_fields=["processing_status"])
+                 return None
 
         # Proceed to update Session object (keeping existing logic for session tracking)
     
@@ -1157,6 +1232,13 @@ def handle_checkout_session_completed(event):
         print(f"Exception type: {type(e).__name__}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
+        
+        # CRITICAL FIX: Release the lock by setting status to 'failed'
+        if 'order_obj' in locals() and order_obj:
+            print(f"⚠️ An exception occurred. Resetting processing_status for Order {order_obj.id} to 'failed'.")
+            order_obj.processing_status = "failed"
+            order_obj.save(update_fields=["processing_status"])
+            
         return None
     
     print("Creating/updating CheckoutSession...")
@@ -1193,6 +1275,14 @@ def process_order(event,order_obj):
     try:
         company_id = order_obj.company_id
         user_id = order_obj.user_id
+
+        # --- IDEMPOTENCY CHECK ---
+        # If the order already has an invoice_id, it means it has been processed.
+        # We return True to indicate "success" (already handled) and prevent duplicate work.
+        if order_obj.invoice_id:
+            print(f"✅ Order {order_obj.id} already processed (Invoice ID: {order_obj.invoice_id}). Skipping duplicate processing.")
+            return True
+        # -------------------------
         
         print("Calling NotaryDashServices.get_client_one_user...")
         client_user = NotaryDashServices.get_client_one_user(company_id, user_id)
@@ -1327,9 +1417,11 @@ def process_order(event,order_obj):
             print("⚠️ No payment_intent ID found in session")
         from stripe_payment.tasks import process_tos_for_ghl
         process_tos_for_ghl(order_obj.user_id,contact_data["id"])
+
+        return True # Explicitly return True on success
     
     except Exception as e:
-        print(f"ERROR in handle_checkout_session_completed: {str(e)}")
+        print(f"ERROR in process_order: {str(e)}")
         print(f"Exception type: {type(e).__name__}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
@@ -1418,7 +1510,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
     print(f"Calling NotaryDashServices.create_products...")
     prd_response = NotaryDashServices.create_products(notary_product)
     
-    print(f"Product creation response: {prd_response}")
+    # print(f"Product creation response: {prd_response}")
     if prd_response:
         prd = prd_response.get("data", None)
         # print(f"prd: {json.dumps(prd, indent=4)}")
@@ -1453,7 +1545,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
                 "parent_id": prd.get("id") if prd_response else None,
                 "name": prd.get("name") if prd_response else prd_name,
                 "pay_to_notary": prd.get("pay_to_notary", 0) if prd_response else 0,
-                "charge_client": prd.get("charge_client", order.total_price+order.order_protection_price) if prd_response else order.total_price+order.order_protection_price,
+                "charge_client": prd.get("charge_client", float(order.total_price or 0) + float(order.order_protection_price or 0)) if prd_response else float(order.total_price or 0) + float(order.order_protection_price or 0),
                 "scanbacks_required": True
             },
             "attr": {
@@ -1481,13 +1573,27 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
     print(f"Calling NotaryDashServices.create_order...")
     
     ord_response = NotaryDashServices.create_order(notary_order)
-    # print(f"Order creation response: {ord_response}")
+    # print(f"Order creation response: {json.dumps(ord_response, indent=2)}")
 
     if ord_response and ord_response.get("data"):
         order_id = str(ord_response.get("data", {}).get("id"))
         order_id_num = str(ord_response.get("data", {}).get("order_id"))
         order.notary_order_id = order_id_num
         print(f"SUCCESS: Notary order created with ID: {order_id}")
+
+        # Trigger Order Created Signal (Decoupled)
+        from .signals import notary_order_created
+        notary_order_created.send(
+            sender=order.__class__, 
+            notary_order=notary_order,
+            order_response=ord_response
+        )
+
+        keap_response = KeapSocketService.send_data("gsync/unix-test/", ord_response)
+        if keap_response and "error" not in keap_response:
+            print(f"SUCCESS: Sending to Keap successful")
+        else:
+            print(f"ERROR: Sending to Keap failed")
         inv_data["invoiceNumber"] = order_id
         print(f"Updated inv_data with invoiceNumber: {order_id}")
         print(f"=== BUILD NOTARY ORDER DEBUG END (SUCCESS) ===")
@@ -1508,7 +1614,7 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
     print(f"Order service_type: {order.service_type}")
     print(f"Location ID: {location_id}")
     # print(f"Contact: {contact}")
-    print(f"Event obj: {json.dumps(event_obj, indent=2)}")
+    # print(f"Event obj: {json.dumps(event_obj, indent=2)}")
     # print(f"Client user: {client_user}")
 
     def build_item(name, description, price, currency="USD", qty=1):
@@ -1657,6 +1763,10 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
     print(f"discount amount: {discount_amount}")
     
     print(f"Building invoice data structure...")
+    order_status_emails_list = []
+    if order.order_status_emails:
+        order_status_emails_list = order.order_status_emails.split('\n')
+
     invoice_data = {
         "altId": location_id,
         "altType": "location",
@@ -1677,7 +1787,14 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
             "type": "fixed",
             # "validOnProductIds": "[ '6579751d56f60276e5bd4154' ]"
         },
-        "termsNotes": "<p>This is a default terms.</p>",
+        "termsNotes": render_to_string(
+                "invoice_notes.html", 
+                context={
+                    "order":order,
+                    "order_status_emails_list": order_status_emails_list
+                    }
+        ).replace("\n", "").replace('"', "'"),
+    
         "title": f"Invoice -{order.get_service_type_display() if order.service_type !="mixed" else "Bundle+A La Carte"}",
         "contactDetails": {
             "id": contact.get("id"),
@@ -1687,7 +1804,9 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
             "additionalEmails": [],
             "companyName": "",
             "address": address,
-            "customFields": []
+            "customFields": [
+               order.sp_instruction if order.sp_instruction else ""
+            ]
         },
         "invoiceNumber": f"{str(order.stripe_session_id)}",
         "issueDate": now().date().isoformat(),
@@ -1756,7 +1875,17 @@ def record_payment(invoice_data):
 
 
 class OrderRetrieveView(viewsets.GenericViewSet, mixins.RetrieveModelMixin):
-    queryset = Order.objects.prefetch_related('a_la_carte_services').all()
+    queryset = Order.objects.prefetch_related(
+        'a_la_carte_services',
+        'a_la_carte_services__items',
+        'a_la_carte_services__items__options',
+        'a_la_carte_services__items__submenu_items',
+        'a_la_carte_services__items__modal_options',
+        'a_la_carte_services__items__disclosures',
+        'bundles',
+        'bundles__options',
+        'bundles__modal_options'
+    ).all()
     serializer_class = OrderSerializer
     lookup_field = "stripe_session_id"
 

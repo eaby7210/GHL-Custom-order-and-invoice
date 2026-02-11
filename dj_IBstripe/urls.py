@@ -20,6 +20,7 @@ from django.urls import path,include
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('',include('stripe_payment.urls')),
+    path('auth/', include('oauth2_provider.urls', namespace='oauth2_provider')),
     path("summernote/", include("django_summernote.urls")), 
     path("order_page/", include("order_page.urls")),
     path("twebs/", include("tolt.urls"))

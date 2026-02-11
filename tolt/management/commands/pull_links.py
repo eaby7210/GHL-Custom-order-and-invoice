@@ -1,5 +1,4 @@
 from django.core.management.base import BaseCommand
-from core.services import NotaryService
 from datetime import datetime
 from django.utils.timezone import make_aware, is_naive
 import logging, json,time
@@ -11,10 +10,7 @@ from django.core.management.base import CommandError
 from tolt.models import Link
 from requests.exceptions import RequestException, HTTPError, Timeout, ConnectionError
 
-from core.models import (
-    NotaryOrder, Client,ClientUser, Owner, Notary, Product, Signer, Cosigner, Address, Location,
-    Adjustment, Document, NotaryOrderStatus,NotaryKeapSync, NotaryLog
-)
+
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
 

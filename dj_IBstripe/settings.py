@@ -51,12 +51,16 @@ if NOTARY_TEST:
 else:
     NOTARY_API_KEY = config('NOTARY_LIVE_API_KEY')
 
+
 TYPEFORM_ACCESS_TOKEN = config('TYPEFORM_ACCESS_TOKEN', default=None)
 TOLT_KEY = config('TOLT_KEY', default=None)
 
+KEAP_SOCKET_PATH = config('KEAP_SOCKET_PATH', default='/home/ubuntu/keap-notary-sync/keap.sock')
+KEAP_HTTP_URL = config('KEAP_HTTP_URL', default='http://localhost:5000')
+
 DEBUG = True
 
-ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', '37d5165a4f2b.ngrok-free.app', 'localhost:8000']
+ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', 'eeb6ba23cd77.ngrok-free.app', 'localhost:8000']
 
 CORS_ALLOWED_ORIGINS = ['http://localhost:3000','http://localhost:5173','https://go.investorbootz.com']
 
@@ -84,13 +88,18 @@ INSTALLED_APPS = [
     'corsheaders',
     'django_summernote',
     'adminsortable2',
+    'oauth2_provider',
+    'webhooks',
     'core',
     'stripe_payment',
     'order_page',
     'tolt',
 ]
 
+OAUTH2_PROVIDER_APPLICATION_MODEL = 'oauth2_provider.Application'
+
 MIDDLEWARE = [
+    'oauth2_provider.middleware.OAuth2TokenMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
     'django.middleware.security.SecurityMiddleware',
@@ -104,6 +113,17 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'dj_IBstripe.urls'
+
+REST_FRAMEWORK = {
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.AllowAny',
+    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
+        'rest_framework.authentication.SessionAuthentication',    
+    ),
+
+}
 
 TEMPLATES = [
     {
@@ -144,6 +164,9 @@ else:
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
             'NAME': BASE_DIR / 'db.sqlite3',
+            'OPTIONS': {
+                'timeout': 60,
+            }
         }
     }
     # DATABASES = {
@@ -195,8 +218,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-if config('APP_MODE') == 'live_test':
-    FORCE_SCRIPT_NAME = '/test-yphwq03tg/'
+# if config('APP_MODE') == 'live_test':
+#     FORCE_SCRIPT_NAME = '/test-yphwq03tg/'
 # else:
 #     FORCE_SCRIPT_NAME = '/'
 

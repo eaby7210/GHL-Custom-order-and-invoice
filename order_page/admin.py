@@ -141,7 +141,7 @@ class BundleAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ("Bundle Info", {
-            "fields": ("group", "name", "description", "is_active", "sort_order")
+            "fields": ("group", "name", "description", "is_active", "min_lead_time", "sort_order")
         }),
         ("Pricing", {
             "fields": ("base_price", "discounted_price")
@@ -438,6 +438,7 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
                 "title",
                 "subtitle",
                 "price",
+                "min_lead_time",
                 # "base_price",
                 "protection_invalid",
                 "option_group",

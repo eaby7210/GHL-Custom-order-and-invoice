@@ -22,6 +22,9 @@ python-decouple = "*"
 stripe = "*"
 django-summernote = "*"
 django-admin-sortable2 = "*"
+django-oauth-toolkit = "*"
+requests-unixsocket = "*"
+pytz = "*"
 
 [dev-packages]
 
