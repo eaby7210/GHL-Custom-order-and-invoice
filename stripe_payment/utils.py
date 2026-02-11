@@ -41,7 +41,7 @@ def create_stripe_customer(company_name, email=None, metadata=None):
         customer = stripe.Customer.create(**customer_data)
         print(f"✅ Created Stripe Customer: {customer.id} for {company_name}")
         return customer
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout creating Customer: {e}")
         return None
     except Exception as e:
@@ -61,7 +61,7 @@ def apply_coupon_to_customer(customer_id, coupon_id):
         )
         print(f"✅ Applied coupon {coupon_id} to customer {customer_id}")
         return True
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout applying coupon: {e}")
         return False
     except Exception as e:
@@ -223,7 +223,7 @@ def create_stripe_session(order: Order, domain, customer_id=None):
     try:
         session = stripe.checkout.Session.create(**session_params)
         return session
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout creating Session: {e}")
         raise e
     except Exception as e:
@@ -266,7 +266,7 @@ def get_coupon_by_promo_code(code)-> stripe_coupon |None:
                 
             return None
         return None
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout retrieving promotion code: {e}")
         return None
     except stripe.StripeError as e:
@@ -294,7 +294,7 @@ def sync_stripe_coupons():
                     'valid': sc.get('valid', True),
                 }
             )
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout syncing coupons: {e}")
         raise e
     except stripe.StripeError as e:
@@ -312,7 +312,7 @@ def get_coupon(user_coupon_code)->stripe_coupon | None:
             print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
             return coupon
 
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout retrieving coupon: {e}")
         return None
     except Exception as e:
@@ -329,8 +329,11 @@ def list_payment_methods(customer_id):
             type="card"
         )
         return methods.data
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout listing payment methods: {e}")
+        return []
+    except stripe.InvalidRequestError as e:
+        print(f"⚠️ Invalid Request (likely wrong environment): {e}")
         return []
     except Exception as e:
         print(f"Error listing payment methods: {e}")
@@ -346,7 +349,7 @@ def attach_payment_method(payment_method_id, customer_id):
             customer=customer_id,
         )
         return True
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout attaching payment method: {e}")
         raise e
     except stripe.InvalidRequestError as e:
@@ -370,7 +373,7 @@ def set_default_payment_method(customer_id, payment_method_id):
             invoice_settings={"default_payment_method": payment_method_id}
         )
         return True
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout setting default payment method: {e}")
         raise e
     except Exception as e:
@@ -387,7 +390,7 @@ def create_stripe_setup_intent(customer_id):
             payment_method_types=["card"],
         )
         return intent
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout creating SetupIntent: {e}")
         return None
     except Exception as e:
@@ -441,7 +444,7 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
 
         return intent, redirect_url
 
-    except stripe.error.TimeoutError as e:
+    except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout creating PaymentIntent: {e}")
         return None, None
     except Exception as e:
