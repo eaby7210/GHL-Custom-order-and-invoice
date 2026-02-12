@@ -6,9 +6,20 @@ from django.conf import settings
 class Command(BaseCommand):
     help = 'Removes duplicate Stripe payment methods (cards) for all customers based on fingerprint.'
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--dry-run',
+            action='store_true',
+            help='Simulate the cleanup without actually detaching cards.',
+        )
+
     def handle(self, *args, **options):
         stripe.api_key = settings.STRIPE_SECRET_KEY
+        dry_run = options['dry_run']
         
+        if dry_run:
+            self.stdout.write(self.style.WARNING("RUNNING IN DRY-RUN MODE. No cards will be detached."))
+
         # Filter companies that have a stripe_customer_id
         companies = NotaryClientCompany.objects.filter(stripe_customer_id__isnull=False).exclude(stripe_customer_id='')
         
@@ -64,11 +75,14 @@ class Command(BaseCommand):
                         
                         for pm in pms:
                             if pm.id != keeper.id:
-                                self.stdout.write(f"   -> Detaching: {pm.id}")
-                                try:
-                                    stripe.PaymentMethod.detach(pm.id)
-                                except Exception as e:
-                                    self.stderr.write(f"   -> ❌ Error detaching {pm.id}: {e}")
+                                if dry_run:
+                                    self.stdout.write(f"   -> [DRY RUN] Would detach: {pm.id}")
+                                else:
+                                    self.stdout.write(f"   -> Detaching: {pm.id}")
+                                    try:
+                                        stripe.PaymentMethod.detach(pm.id)
+                                    except Exception as e:
+                                        self.stderr.write(f"   -> ❌ Error detaching {pm.id}: {e}")
 
             except Exception as e:
                 self.stderr.write(f"Error processing company {company.id} - {company.company_name}: {e}")
