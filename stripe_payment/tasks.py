@@ -56,3 +56,57 @@ def process_tos_for_ghl(user_id: int, contact_id: int):
        response= ContactServices.push_contact(contact, contact_update_payload)
        print("updated contact with tos")
     
+@shared_task
+def check_duplicate_payment_method(customer_id, payment_intent_id):
+    """
+    Checks if the payment method used in the given PaymentIntent is a duplicate
+    (same fingerprint) of an existing saved card for the customer.
+    If so, it detaches the new one to prevent duplicates.
+    Returns a string indicating the outcome for logging/debugging.
+    """
+    import stripe
+    from .utils import list_payment_methods
+    
+    try:
+        # 1. Retrieve the PaymentIntent
+        pi = stripe.PaymentIntent.retrieve(payment_intent_id)
+        if not pi or not pi.payment_method:
+            return "Skipped: No payment method on PaymentIntent"
+
+        new_pm_object = pi.payment_method 
+
+        # 2. Get the full PaymentMethod object
+        if isinstance(new_pm_object, str):
+            new_pm = stripe.PaymentMethod.retrieve(new_pm_object)
+        else:
+            new_pm = new_pm_object
+
+        # 3. Validate it's a card with a fingerprint
+        if not new_pm or not new_pm.card or not new_pm.card.fingerprint:
+            return "Skipped: Payment method is not a card or missing fingerprint"
+
+        new_fingerprint = new_pm.card.fingerprint
+        existing_methods = list_payment_methods(customer_id)
+
+        # 4. Check for duplicates
+        for pm in existing_methods:
+            # Skip comparing to itself
+            if pm.id == new_pm.id:
+                continue
+            
+            # Ensure existing method has a card fingerprint
+            if not pm.card or not pm.card.fingerprint:
+                continue
+
+            if pm.card.fingerprint == new_fingerprint:
+                print(f"⚠️ Duplicate payment method detected (Fingerprint: {new_fingerprint}). Detaching new one: {new_pm.id}, Keeping old one: {pm.id}")
+                stripe.PaymentMethod.detach(new_pm.id)
+                return f"Detached duplicate: {new_pm.id}"
+
+        return "No duplicate found"
+
+    except Exception as e:
+        error_msg = f"⚠️ Error in duplicate payment method check task: {e}"
+        print(error_msg)
+        return error_msg
+

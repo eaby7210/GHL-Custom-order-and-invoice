@@ -1226,6 +1226,20 @@ def handle_checkout_session_completed(event):
                  return None
 
         # Proceed to update Session object (keeping existing logic for session tracking)
+        
+        # --- DUPLICATE CARD CHECK (ASYNC) ---
+        try:
+            customer_id = obj.get("customer")
+            payment_intent_id = obj.get("payment_intent")
+
+            if customer_id and payment_intent_id:
+                from .tasks import check_duplicate_payment_method
+                check_duplicate_payment_method.delay(customer_id, payment_intent_id)
+                print(f"Scheduled duplicate payment check for customer {customer_id}")
+                
+        except Exception as e:
+            print(f"⚠️ Error scheduling duplicate payment method check: {e}")
+        # ----------------------------
     
     except Exception as e:
         print(f"ERROR in handle_checkout_session_completed: {str(e)}")
