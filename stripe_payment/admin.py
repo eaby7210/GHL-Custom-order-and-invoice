@@ -275,6 +275,9 @@ class StripeWebhookEventLogAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return False
+
 
 class BundleOptionInline(admin.TabularInline):
     model = BundleOption
@@ -285,6 +288,9 @@ class BundleOptionInline(admin.TabularInline):
     def has_add_permission(self, request, obj=None):
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return False
+
 
 class BundleModalOptionInline(admin.TabularInline):
     model = BundleModalOption
@@ -293,6 +299,9 @@ class BundleModalOptionInline(admin.TabularInline):
     can_delete = False
 
     def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False
 
 
@@ -308,6 +317,9 @@ class BundleAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return False
+
 
 class BundleInline(admin.TabularInline):
     model = Bundle
@@ -320,6 +332,9 @@ class BundleInline(admin.TabularInline):
     def has_add_permission(self, request, obj=None):
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return False
+
 
 class ALaCarteOptionInline(admin.TabularInline):
     model = ALaCarteOption
@@ -330,6 +345,9 @@ class ALaCarteOptionInline(admin.TabularInline):
     def has_add_permission(self, request, obj=None):
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return False
+
 
 class ALaCarteSubMenuItemInline(admin.TabularInline):
     model = ALaCarteSubMenuItem
@@ -338,6 +356,9 @@ class ALaCarteSubMenuItemInline(admin.TabularInline):
     can_delete = False
 
     def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
         return False
 
 
@@ -350,6 +371,9 @@ class ALaCarteItemModalOptionInline(admin.TabularInline):
     def has_add_permission(self, request, obj=None):
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return False
+
 
 class ALaCarteItemDisclosureInline(admin.TabularInline):
     model = ALaCarteItemDisclosure
@@ -358,6 +382,9 @@ class ALaCarteItemDisclosureInline(admin.TabularInline):
     can_delete = False
 
     def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False
 
 
@@ -379,6 +406,9 @@ class ALaCarteItemAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return False
+
 
 class ALaCarteItemInline(admin.TabularInline):
     model = ALaCarteItem
@@ -389,6 +419,9 @@ class ALaCarteItemInline(admin.TabularInline):
     can_delete = False
 
     def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False
 
 
@@ -405,6 +438,9 @@ class ALaCarteServiceAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+    def has_change_permission(self, request, obj=None):
+        return False
+
 
 class ALaCarteServiceInline(admin.TabularInline):
     model = ALaCarteService
@@ -415,6 +451,9 @@ class ALaCarteServiceInline(admin.TabularInline):
     can_delete = False
 
     def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False
 
 
@@ -439,5 +478,8 @@ class OrderAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False
 
