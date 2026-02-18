@@ -7,6 +7,7 @@ from .models import (
     ALaCarteItemModalOption, ALaCarteItemDisclosure,
     StripeWebhookEventLog
 )
+from rangefilter.filters import DateTimeRangeFilter
 
 
 @admin.register(NotaryClientCompany)
@@ -469,10 +470,9 @@ class OrderAdmin(admin.ModelAdmin):
         'processing_status', 
         'occupancy_status',
         'order_protection',
-        'order_protection_price',
-        ('created_at', admin.DateFieldListFilter),
-        ('accepted_at', admin.DateFieldListFilter),
-        ('preferred_datetime', admin.DateFieldListFilter),
+        ('created_at', DateTimeRangeFilter),
+        ('accepted_at', DateTimeRangeFilter),
+        ('preferred_datetime', DateTimeRangeFilter),
     ]
     search_fields = [
         'id', 'user_id', 'company_id', 'stripe_session_id', 

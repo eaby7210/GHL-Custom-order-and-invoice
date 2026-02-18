@@ -94,6 +94,7 @@ INSTALLED_APPS = [
     'stripe_payment',
     'order_page',
     'tolt',
+    'rangefilter',
 ]
 
 OAUTH2_PROVIDER_APPLICATION_MODEL = 'oauth2_provider.Application'

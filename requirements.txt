@@ -11,11 +11,12 @@ click-didyoumean==0.3.1
 click-plugins==1.1.1.2
 click-repl==0.3.0
 cron_descriptor==2.0.6
-cryptography==46.0.4
-dj-rest-auth==7.0.2
+cryptography==46.0.5
+dj-rest-auth==7.1.1
 Django==5.2.11
+django-admin-rangefilter==0.13.5
 django-admin-sortable2==2.3.1
-django-allauth==65.14.0
+django-allauth==65.14.3
 django-celery-beat==2.8.1
 django-cors-headers==4.9.0
 django-filter==25.2
@@ -24,7 +25,7 @@ django-summernote==0.8.20.0
 django-timezone-field==7.2.1
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
-gunicorn==25.0.1
+gunicorn==25.1.0
 idna==3.11
 jwcrypto==1.5.6
 kombu==5.6.2
@@ -38,10 +39,10 @@ python-crontab==3.3.0
 python-dateutil==2.9.0.post0
 python-decouple==3.8
 pytz==2025.2
-redis==7.1.0
+redis==7.2.0
 requests==2.32.5
 requests-unixsocket==0.4.1
-setuptools==80.10.2
+setuptools==82.0.0
 six==1.17.0
 sqlparse==0.5.5
 stripe==14.3.0
@@ -50,5 +51,5 @@ tzdata==2025.3
 tzlocal==5.3.1
 urllib3==2.6.3
 vine==5.1.0
-wcwidth==0.5.3
+wcwidth==0.6.0
 webencodings==0.5.1
