@@ -1,4 +1,5 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.db.models import Sum
 from django.utils.html import format_html
 from .models import (
     NotaryUser, NotaryClientCompany, NotaryCompanyGroup,
@@ -489,4 +490,30 @@ class OrderAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        
+        try:
+            qs = response.context_data['cl'].queryset
+        except (AttributeError, KeyError):
+            return response
+            
+        metrics = qs.aggregate(
+            total_sum=Sum('total_price'),
+            protection_sum=Sum('order_protection_price')
+        )
+        
+        total = metrics['total_sum'] or 0
+        protection = metrics['protection_sum'] or 0
+        
+        msg = format_html(
+            '<strong>Analysis of Filtered Orders:</strong> '
+            'Total Price: ${} | '
+            'Order Protection: ${}',
+            total, protection
+        )
+        self.message_user(request, msg, messages.INFO)
+        
+        return response
 
