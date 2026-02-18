@@ -460,12 +460,19 @@ class ALaCarteServiceInline(admin.TabularInline):
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     list_display = [
-        'id', 'unit_type', 'service_type', 'total_price', 
+        'id', 'company_name', 'service_type', 'total_price','order_protection_price', 
         'created_at', 'processing_status', 'user_id'
     ]
     list_filter = [
-        'service_type', 'unit_type', 'processing_status', 
-        'created_at', 'occupancy_status'
+        'service_type', 
+        'unit_type', 
+        'processing_status', 
+        'occupancy_status',
+        'order_protection',
+        'order_protection_price',
+        ('created_at', admin.DateFieldListFilter),
+        ('accepted_at', admin.DateFieldListFilter),
+        ('preferred_datetime', admin.DateFieldListFilter),
     ]
     search_fields = [
         'id', 'user_id', 'company_id', 'stripe_session_id', 
