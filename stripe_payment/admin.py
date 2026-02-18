@@ -1,6 +1,12 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import NotaryUser, NotaryClientCompany, NotaryCompanyGroup
+from .models import (
+    NotaryUser, NotaryClientCompany, NotaryCompanyGroup,
+    Order, Bundle, BundleOption, BundleModalOption,
+    ALaCarteService, ALaCarteItem, ALaCarteOption, ALaCarteSubMenuItem,
+    ALaCarteItemModalOption, ALaCarteItemDisclosure,
+    StripeWebhookEventLog
+)
 
 
 @admin.register(NotaryClientCompany)
@@ -254,4 +260,184 @@ class NotaryCompanyGroupAdmin(admin.ModelAdmin):
     def company_count(self, obj):
         return obj.companies.count()
     company_count.short_description = 'Number of Companies'
+
+
+@admin.register(StripeWebhookEventLog)
+class StripeWebhookEventLogAdmin(admin.ModelAdmin):
+    list_display = ['event_id', 'event_type', 'processed', 'created_at']
+    list_filter = ['processed', 'event_type', 'created_at']
+    search_fields = ['event_id', 'event_type', 'error_message']
+    readonly_fields = [field.name for field in StripeWebhookEventLog._meta.fields]
+    
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class BundleOptionInline(admin.TabularInline):
+    model = BundleOption
+    extra = 0
+    readonly_fields = [field.name for field in BundleOption._meta.fields]
+    can_delete = False
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class BundleModalOptionInline(admin.TabularInline):
+    model = BundleModalOption
+    extra = 0
+    readonly_fields = [field.name for field in BundleModalOption._meta.fields]
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Bundle)
+class BundleAdmin(admin.ModelAdmin):
+    list_display = ['name', 'order', 'price']
+    search_fields = ['name', 'order__id']
+    inlines = [BundleOptionInline, BundleModalOptionInline]
+    
+    def has_add_permission(self, request):
+        return False
+        
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class BundleInline(admin.TabularInline):
+    model = Bundle
+    extra = 0
+    fields = ['name', 'description', 'base_price', 'price']
+    readonly_fields = ['name', 'description', 'base_price', 'price']
+    show_change_link = True
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class ALaCarteOptionInline(admin.TabularInline):
+    model = ALaCarteOption
+    extra = 0
+    readonly_fields = [field.name for field in ALaCarteOption._meta.fields]
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class ALaCarteSubMenuItemInline(admin.TabularInline):
+    model = ALaCarteSubMenuItem
+    extra = 0
+    readonly_fields = [field.name for field in ALaCarteSubMenuItem._meta.fields]
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class ALaCarteItemModalOptionInline(admin.TabularInline):
+    model = ALaCarteItemModalOption
+    extra = 0
+    readonly_fields = [field.name for field in ALaCarteItemModalOption._meta.fields]
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class ALaCarteItemDisclosureInline(admin.TabularInline):
+    model = ALaCarteItemDisclosure
+    extra = 0
+    readonly_fields = [field.name for field in ALaCarteItemDisclosure._meta.fields]
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ALaCarteItem)
+class ALaCarteItemAdmin(admin.ModelAdmin):
+    list_display = ['title', 'service', 'item_id', 'price']
+    list_filter = ['service__service_id']
+    search_fields = ['title', 'item_id', 'service__title']
+    inlines = [
+        ALaCarteOptionInline, 
+        ALaCarteSubMenuItemInline, 
+        ALaCarteItemModalOptionInline,
+        ALaCarteItemDisclosureInline
+    ]
+    
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class ALaCarteItemInline(admin.TabularInline):
+    model = ALaCarteItem
+    extra = 0
+    fields = ['title', 'price', 'item_id']
+    readonly_fields = ['title', 'price', 'item_id']
+    show_change_link = True
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ALaCarteService)
+class ALaCarteServiceAdmin(admin.ModelAdmin):
+    list_display = ['title', 'service_id', 'order']
+    list_filter = ['service_id']
+    search_fields = ['title', 'form_title', 'service_id']
+    inlines = [ALaCarteItemInline]
+    
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class ALaCarteServiceInline(admin.TabularInline):
+    model = ALaCarteService
+    extra = 0
+    fields = ['title', 'service_id']
+    readonly_fields = ['title', 'service_id']
+    show_change_link = True
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = [
+        'id', 'unit_type', 'service_type', 'total_price', 
+        'created_at', 'processing_status', 'user_id'
+    ]
+    list_filter = [
+        'service_type', 'unit_type', 'processing_status', 
+        'created_at', 'occupancy_status'
+    ]
+    search_fields = [
+        'id', 'user_id', 'company_id', 'stripe_session_id', 
+        'stripe_intent_id', 'address', 'city', 'contact_email'
+    ]
+    readonly_fields = [field.name for field in Order._meta.fields]
+    inlines = [BundleInline, ALaCarteServiceInline]
+    
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
