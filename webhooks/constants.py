@@ -11,6 +11,7 @@ class WebhookEventKeys:
     ORDER_PENDING = "order.pending"
     ORDER_PROCESSING = "order.processing"
     ORDER_COMPLETED = "order.completed"
+    ORDER_COMPLETED_V2_SYNC = "order.completed.v2_sync"
     ORDER_FAILED = "order.failed"
     
     # Notary Client Company Events
@@ -32,6 +33,7 @@ WEBHOOK_EVENT_DESCRIPTIONS = {
     WebhookEventKeys.ORDER_PENDING: "Triggered when an Order status changes to pending.",
     WebhookEventKeys.ORDER_PROCESSING: "Triggered when an Order status changes to processing.",
     WebhookEventKeys.ORDER_COMPLETED: "Triggered when an Order is successfully completed.After Generating Order Invoice",
+    WebhookEventKeys.ORDER_COMPLETED_V2_SYNC: "Triggered when a non-external Order is completed. Payload shaped for V2 Supabase orders table.",
     WebhookEventKeys.ORDER_FAILED: "Triggered when an Order fails processing.",
     WebhookEventKeys.NOTARY_CLIENT_COMPANY_CREATED: "Triggered when a new Notary Client Company is created.",
     WebhookEventKeys.NOTARY_CLIENT_COMPANY_UPDATED: "Triggered when a Notary Client Company details are updated.",

@@ -201,3 +201,167 @@ class InvoiceSerializer(serializers.ModelSerializer):
         ]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  SupabaseOrderSerializer — reverse-maps Django Order to V2 Supabase schema
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SupabaseOrderSerializer(serializers.Serializer):
+    """
+    Serializes a Django Order instance into the shape expected by the
+    V2 Supabase `orders` table so it can be upserted there.
+    """
+
+    unit_type = serializers.CharField()
+    property_info = serializers.SerializerMethodField()
+    selected_bundles = serializers.SerializerMethodField()
+    selected_services = serializers.SerializerMethodField()
+    property_access = serializers.SerializerMethodField()
+    scheduled_date = serializers.SerializerMethodField()
+    scheduled_time = serializers.SerializerMethodField()
+    scheduled_timezone = serializers.CharField(source="preferred_timezone", default="")
+    bundle_subtotal = serializers.SerializerMethodField()
+    service_subtotal = serializers.SerializerMethodField()
+    bundle_discount = serializers.DecimalField(
+        source="discount_amount", max_digits=10, decimal_places=2, default="0.00"
+    )
+    total = serializers.DecimalField(
+        source="total_price", max_digits=10, decimal_places=2, default="0.00"
+    )
+    status = serializers.SerializerMethodField()
+    external_id = serializers.CharField(source="notary_order_id", default=None)
+    schedule_preference = serializers.SerializerMethodField()
+    property_status = serializers.CharField(source="occupancy_status", default="")
+    order_protection = serializers.BooleanField(default=False)
+    appointment_confirm_with = serializers.CharField(source="point_of_contact", default="")
+    appointment_confirm_contact = serializers.SerializerMethodField()
+    reschedule_preference = serializers.CharField(source="rescheduling_option", default="")
+    reschedule_contact = serializers.SerializerMethodField()
+    cc_emails = serializers.SerializerMethodField()
+    order_number = serializers.CharField(source="stripe_session_id", default="")
+    company_id = serializers.CharField(default="")
+    user_id = serializers.CharField(default="")
+    created_at = serializers.DateTimeField(format="%Y-%m-%dT%H:%M:%S%z")
+
+    # ── property_info ──
+    def get_property_info(self, obj):
+        return {
+            "streetAddress": obj.streetAddress or "",
+            "unitAptSuite": obj.unit or "",
+            "city": obj.city or "",
+            "state": obj.state or "",
+            "postalCode": obj.postal_code or "",
+            "numberOfUnits": obj.number_of_units,
+        }
+
+    # ── property_access ──
+    def get_property_access(self, obj):
+        methods = []
+        if obj.access_lock_box:
+            methods.append("lockbox")
+        if obj.access_app_lock_box:
+            methods.append("app_lockbox")
+        if obj.access_meet_contact:
+            methods.append("meet_contact")
+        if obj.access_door_code:
+            methods.append("door_code")
+        if obj.access_hidden_key:
+            methods.append("hidden_key")
+        if obj.access_community_access:
+            methods.append("community_access")
+
+        return {
+            "accessMethods": methods,
+            "lockboxCode": obj.lock_box_code or "",
+            "lockboxLocation": obj.lock_box_location or "",
+            "appLink": obj.app_lock_link or "",
+            "doorCode": obj.door_code_value or "",
+            "hiddenKeyDirections": obj.hidden_key_directions or "",
+            "communityInstructions": obj.community_access_instructions or "",
+            "specialInstructions": obj.sp_instruction or "",
+            "contactFirstName": obj.contact_first_name or "",
+            "contactLastName": obj.contact_last_name or "",
+            "contactPhone": obj.contact_phone or "",
+        }
+
+    # ── selected_bundles ──
+    def get_selected_bundles(self, obj):
+        bundles = []
+        for b in obj.bundles.all():
+            bundles.append({
+                "name": b.name,
+                "description": b.description or "",
+                "base_price": str(b.base_price),
+                "price": str(b.price),
+            })
+        return bundles
+
+    # ── selected_services ──
+    def get_selected_services(self, obj):
+        services = []
+        for svc in obj.a_la_carte_services.all():
+            for item in svc.items.all():
+                services.append({
+                    "id": item.item_id,
+                    "name": item.title,
+                    "description": item.subtitle or "",
+                    "price": str(item.price or 0),
+                    "category": svc.service_id or "",
+                })
+        return services
+
+    # ── schedule fields ──
+    def get_scheduled_date(self, obj):
+        if obj.preferred_datetime:
+            return obj.preferred_datetime.strftime("%Y-%m-%d")
+        return None
+
+    def get_scheduled_time(self, obj):
+        if obj.tbd or not obj.preferred_datetime:
+            return "TBD"
+        return obj.preferred_datetime.strftime("%H:%M:%S")
+
+    def get_schedule_preference(self, obj):
+        if obj.tbd:
+            return "schedule_for_me"
+        return "choose_time"
+
+    # ── subtotals ──
+    def get_bundle_subtotal(self, obj):
+        total = sum(b.base_price for b in obj.bundles.all())
+        return str(total)
+
+    def get_service_subtotal(self, obj):
+        total = sum(
+            item.price or 0
+            for svc in obj.a_la_carte_services.all()
+            for item in svc.items.all()
+        )
+        return str(total)
+
+    # ── status ──
+    def get_status(self, obj):
+        return "order_received"
+
+    # ── contact JSONB fields ──
+    def get_appointment_confirm_contact(self, obj):
+        return {
+            "firstName": obj.contact_first_name_sched or "",
+            "lastName": obj.contact_last_name_sched or "",
+            "phone": obj.contact_phone_sched or "",
+            "email": obj.contact_email_sched or "",
+        }
+
+    def get_reschedule_contact(self, obj):
+        return {
+            "firstName": obj.contact_first_name_resched or "",
+            "lastName": obj.contact_last_name_resched or "",
+            "phone": obj.contact_phone_resched or "",
+        }
+
+    # ── cc_emails ──
+    def get_cc_emails(self, obj):
+        if obj.order_status_emails:
+            return [e.strip() for e in obj.order_status_emails.split("\n") if e.strip()]
+        return []
+
+

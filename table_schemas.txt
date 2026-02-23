@@ -1,0 +1,222 @@
+1.public.orders:
+
+id
+
+No description
+
+uuid	uuid		
+form_id
+
+No description
+
+text	text		
+unit_type
+
+No description
+
+USER-DEFINED	unit_type		
+property_info
+
+No description
+
+jsonb	jsonb		
+selected_bundles
+
+No description
+
+jsonb	jsonb		
+selected_services
+
+No description
+
+jsonb	jsonb		
+property_access
+
+No description
+
+jsonb	jsonb		
+scheduled_date
+
+No description
+
+date	date		
+scheduled_time
+
+No description
+
+text	text		
+bundle_subtotal
+
+No description
+
+numeric	numeric		
+service_subtotal
+
+No description
+
+numeric	numeric		
+bundle_discount
+
+No description
+
+numeric	numeric		
+total
+
+No description
+
+numeric	numeric		
+status
+
+No description
+
+USER-DEFINED	order_status		
+created_at
+
+No description
+
+timestamp with time zone	timestamptz		
+updated_at
+
+No description
+
+timestamp with time zone	timestamptz		
+user_id
+
+No description
+
+uuid	uuid		
+ghl_webhook_sent
+
+No description
+
+boolean	bool		
+ghl_webhook_sent_at
+
+No description
+
+timestamp with time zone	timestamptz		
+external_id
+
+External system order id, e.g. "other_app|order_123". Used for sync deduplication.
+
+text	text		
+schedule_preference
+
+No description
+
+text	text		
+scheduled_timezone
+
+No description
+
+text	text		
+property_status
+
+No description
+
+text	text		
+order_protection
+
+No description
+
+boolean	bool		
+appointment_confirm_with
+
+No description
+
+text	text		
+appointment_confirm_contact
+
+No description
+
+jsonb	jsonb		
+reschedule_preference
+
+No description
+
+text	text		
+reschedule_contact
+
+No description
+
+jsonb	jsonb		
+cc_emails
+
+No description
+
+ARRAY	_text		
+order_number
+
+No description
+
+text	text		
+assigned_to
+
+No description
+
+uuid	uuid		
+priority
+
+No description
+
+text	text		
+organization_id
+
+No description
+
+uuid	uuid		
+
+
+2.public.services
+
+id
+
+No description
+
+uuid	uuid		
+name
+
+No description
+
+text	text		
+description
+
+No description
+
+text	text		
+price
+
+No description
+
+numeric	numeric		
+category
+
+No description
+
+text	text		
+discount_percentage
+
+No description
+
+numeric	numeric		
+is_active
+
+No description
+
+boolean	bool		
+pricing_variants
+
+No description
+
+jsonb	jsonb		
+created_at
+
+No description
+
+timestamp with time zone	timestamptz		
+updated_at
+
+No description
+
+timestamp with time zone	timestamptz		
+

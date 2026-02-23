@@ -122,22 +122,18 @@ class NotaryCreationView(APIView):
         ).select_related('form').prefetch_related('answers__field')
 
         recent_response = recent_responses.first()
-        recent_response = recent_responses.first()
         if not recent_response:
             print("[NotaryCreationView] No recent Typeform response found after filtering.")
             return Response({"message": "No recent Typeform response found"}, status=status.HTTP_204_NO_CONTENT)
 
         print(f"Using recent response: {recent_response.id}") #type:ignore
 
-        # 2️⃣ Build payloads
         client_payload = {
             "company_name": recent_response.get_answer_by_title("Company"),
         }
 
         client_user_payload = {
             "user": {
-                "password": "test1234",
-                "password_confirmation": "test1234",
                 "first_name": recent_response.get_answer_by_title("First name"),
                 "last_name": recent_response.get_answer_by_title("Last name"),
                 "email": recent_response.get_answer_by_title("Email"),

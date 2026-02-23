@@ -118,9 +118,18 @@ class Order(models.Model):
     contact_last_name_resched = models.CharField(max_length=100, null=True, blank=True)
     contact_phone_resched = models.CharField(max_length=20, null=True, blank=True)
 
+    is_external_odr = models.BooleanField(
+        default=False,
+        verbose_name="Is External Order",
+        help_text="Is External Order from Version 2 App",
+        editable=False,
+        blank=True
+    )
+
 
     @staticmethod
     def from_api(data, coupon, owner_id, company_name, client_team_id):
+
         postal_code = data.get("postalCode")
         unit_type = data.get("unitType")
         address = data.get("address")
