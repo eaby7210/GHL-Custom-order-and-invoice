@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.contrib.postgres.fields import JSONField  
 from django.utils import timezone
 from django.db import transaction
-import uuid
+import uuid, json
 from stripe_payment.models import NotaryClientCompany 
 
 
@@ -151,6 +151,7 @@ class TypeformForm(models.Model):
             # Automatically populate TypeformPartnerMapping for dropdown choices
             if f.get("type") == "dropdown":
                 choices = f.get("properties", {}).get("choices", [])
+                print(f"[DEBUG sync_mappings] Choices: {json.dumps(choices, indent=2)}")
                 current_choice_refs = []
                 for choice in choices:
                     choice_ref = choice.get("ref")
@@ -413,24 +414,42 @@ class TypeformPartnerMapping(models.Model):
                             props = field_item.get("properties", {})
                             choices = props.get("choices", [])
                             
-                            # Check if choice exists by ref
-                            # Use text comparison for safety
-                            existing_choice = next(
-                                (c for c in choices if str(c.get("ref")) == str(self.choice_ref)), 
-                                None
-                            )
+                            # Check if choice exists by ref or label
+                            existing_choice = None
+                            if self.choice_ref:
+                                existing_choice = next(
+                                    (c for c in choices if str(c.get("ref")) == str(self.choice_ref)), 
+                                    None
+                                )
+                            else:
+                                existing_choice = next(
+                                    (c for c in choices if c.get("label") == self.choice_label), 
+                                    None
+                                )
                             
                             if existing_choice:
-                                print(f"[DEBUG] Updating existing choice {self.choice_ref} with label '{self.choice_label}'")
+                                print(f"[DEBUG] Updating existing choice with label '{self.choice_label}'")
                                 # Update label
                                 existing_choice["label"] = self.choice_label
+                                if self.choice_ref:
+                                    existing_choice["ref"] = self.choice_ref
                             else:
-                                print(f"[DEBUG] Adding new choice {self.choice_ref} -> '{self.choice_label}'")
+                                print(f"[DEBUG] Adding new choice -> '{self.choice_label}'")
                                 # Add new choice
-                                choices.append({
-                                    "label": self.choice_label,
-                                    "ref": self.choice_ref
-                                })
+                                import uuid
+                                new_choice = {"label": self.choice_label}
+                                new_choice["ref"] = self.choice_ref if self.choice_ref else str(uuid.uuid4())
+                                choices.append(new_choice)
+                            
+                            # Ensure choices that aren't mapped to a partner are moved to the end
+                            mapped_refs = set(TypeformPartnerMapping.objects.filter(
+                                form=self.form,
+                                field=self.field,
+                                partner__isnull=False
+                            ).values_list('choice_ref', flat=True))
+                            
+                            # Stable sort: mapped (0) comes before unmapped (1)
+                            choices.sort(key=lambda c: 0 if str(c.get("ref")) in mapped_refs else 1)
                             
                             props["choices"] = choices
                             field_item["properties"] = props
@@ -439,6 +458,7 @@ class TypeformPartnerMapping(models.Model):
                 if found_field:
                     # 3. PUT the updated form
                     print(f"[DEBUG] Sending PUT request to update form {self.form.form_id}...")
+                    print(f"Form data: {json.dumps(form_data["fields"], indent=2)}")
                     updated_form = service.update_form(self.form.form_id, form_data)
                     
                     if "error" in updated_form:

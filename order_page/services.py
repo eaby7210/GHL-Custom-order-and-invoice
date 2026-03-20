@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 import time
 from django.conf import settings
@@ -154,6 +155,7 @@ class TypeformService:
         
         try:
             response = requests.put(url, headers=headers, json=data)
+            print(f"Response: {json.dumps(response.json(), indent=2)}")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
