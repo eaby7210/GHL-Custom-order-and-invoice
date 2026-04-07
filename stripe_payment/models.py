@@ -656,6 +656,24 @@ class NotaryUser(models.Model):
         related_name='users'
     )
 
+    # Many NotaryUsers may share the same Typeform partner dropdown mapping.
+    typeform_partner_mapping = models.ForeignKey(
+        "order_page.TypeformPartnerMapping",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notary_users",
+    )
+
+    # Tolt affiliate (from TypeformPartnerMapping.partner when present).
+    partner = models.ForeignKey(
+        "tolt.Partner",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notary_users",
+    )
+
     attr = models.JSONField(default=dict, blank=True)
     disabled = models.BooleanField(null=True, blank=True)
     type = models.CharField(max_length=50)

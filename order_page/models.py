@@ -323,6 +323,70 @@ class TypeformResponse(models.Model):
             print(f" get_answer_by_title({title}) failed:", e)
             return None
 
+    def resolve_typeform_partner_mapping(self):
+        """
+        First TypeformPartnerMapping matching a dropdown choice answer in this
+        response (same ref/label + field lookup as ghl_update_contact).
+        """
+        qs = self.answers.select_related("field").filter(
+            answer_type="choice",
+            field__field_type="dropdown",
+        )
+        for answer in qs:
+            if not answer.value_json or not isinstance(answer.value_json, dict):
+                continue
+            choice_data = answer.value_json
+            choice_ref = choice_data.get("ref")
+            choice_label = choice_data.get("label")
+            if not choice_ref and not choice_label:
+                continue
+            mapping = None
+            if choice_ref:
+                mapping = TypeformPartnerMapping.objects.filter(
+                    field=answer.field,
+                    choice_ref=choice_ref,
+                ).first()
+            if not mapping and choice_label:
+                mapping = TypeformPartnerMapping.objects.filter(
+                    field=answer.field,
+                    choice_label=choice_label,
+                ).first()
+            if mapping:
+                return mapping
+        return None
+
+    def resolve_partner_from_hidden_tolt_link(self):
+        """
+        When Typeform ``hidden`` includes e.g. ``{"ref": "ispeedtolead"}``, match
+        that string against ``tolt.Link.value`` (exact, case-insensitive, then
+        substring) and return the related ``Partner`` if one exists.
+        """
+        from tolt.models import Link
+
+        hidden = self.hidden
+        if not hidden or not isinstance(hidden, dict):
+            return None
+        token = hidden.get("ref")
+        if token is None:
+            return None
+        token = str(token).strip()
+        if not token:
+            return None
+
+        qs = (
+            Link.objects.filter(partner__isnull=False)
+            .exclude(value__isnull=True)
+            .exclude(value="")
+            .select_related("partner")
+            .order_by("-created_at")
+        )
+        link = (
+            qs.filter(value=token).first()
+            or qs.filter(value__iexact=token).first()
+            or qs.filter(value__icontains=token).first()
+        )
+        return link.partner if link else None
+
     def __str__(self):
         return f"Response {self.token} ({self.form.form_id})"
 

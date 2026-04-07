@@ -24,10 +24,13 @@ class NotaryUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotaryUser
         fields = [
-            "id", "email", "first_name", "last_name", "name", 
-            "photo_url", "is_admin", "type", "disabled", 
+            "id", "email", "first_name", "last_name", "name",
+            "photo_url", "is_admin", "type", "disabled",
             "country_code", "tz", "created_at", "last_login_at",
-            "last_company"
+            "last_company",
+            "last_company_id",
+            "partner_id",
+            "typeform_partner_mapping_id",
         ]
 
 class BundleOptionSerializer(serializers.ModelSerializer):

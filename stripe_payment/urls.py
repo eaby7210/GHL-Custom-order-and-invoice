@@ -8,13 +8,21 @@ from .views import (
     CompanyUserListView, CompanyPaymentMethodsView
 )
 from .m2m_views import (
-    NotaryClientCompanyM2MViewSet, NotaryUserM2MViewSet, OrderM2MViewSet
+    NotaryClientCompanyM2MViewSet,
+    NotaryUserM2MViewSet,
+    NotaryUserQueryM2MViewSet,
+    OrderM2MViewSet,
 )
 
 router = DefaultRouter()
 router.register(r'orders', OrderRetrieveView, basename='order')
 router.register(r'companies', NotaryClientCompanyM2MViewSet, basename='m2m-company')
 router.register(r'users', NotaryUserM2MViewSet, basename='m2m-user')
+router.register(
+    r'notary-users/query',
+    NotaryUserQueryM2MViewSet,
+    basename='m2m-notary-user-query',
+)
 router.register(r'create-order', OrderM2MViewSet, basename='m2m-order')
 
 urlpatterns = [

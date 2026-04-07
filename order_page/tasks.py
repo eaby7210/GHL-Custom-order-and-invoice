@@ -1,8 +1,12 @@
 from celery import shared_task
 import logging
+
+from django.utils import timezone
+
 from core.services import ContactServices
 from order_page.models import TypeformResponse, TypeformPartnerMapping, TypeformAnswer
 from tolt.models import Link
+from tolt.services import ToltService
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +151,74 @@ def ghl_update_contact(email: str, typeform_response):
         except Exception as e:
             logger.error(f"Error processing partner mappings in ghl_update_contact: {e}")
 
-        
 
+@shared_task
+def create_tolt_customer_for_notary_user(notary_user_id: int):
+    """
+    Create a Tolt customer for a NotaryUser when they have a linked Partner.
+    Uses NotaryUser email, name, id (as customer_id), partner_id, and lead timestamps.
+    """
+    from stripe_payment.models import NotaryUser
 
+    try:
+        user = NotaryUser.objects.select_related("partner").get(pk=notary_user_id)
+    except NotaryUser.DoesNotExist:
+        logger.warning(
+            "create_tolt_customer_for_notary_user: NotaryUser %s not found",
+            notary_user_id,
+        )
+        return
+
+    if not user.partner_id:
+        logger.info(
+            "create_tolt_customer_for_notary_user: skip user %s (no partner)",
+            notary_user_id,
+        )
+        return
+
+    existing = ToltService.find_customer_by_email(
+        user.email,
+        partner_id=user.partner_id,
+    )
+    if existing:
+        logger.info(
+            "create_tolt_customer_for_notary_user: skip user %s; Tolt customer "
+            "already exists (id=%s, email=%s)",
+            notary_user_id,
+            existing.get("id"),
+            existing.get("email"),
+        )
+        return
+
+    name_parts = [user.first_name or "", user.last_name or ""]
+    name = " ".join(p for p in name_parts if p).strip()
+    if not name:
+        name = (getattr(user, "name", None) or "").strip() or None
+
+    now = timezone.now()
+    lead_at = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    try:
+        result = ToltService.create_customer(
+            user.email,
+            user.partner_id,
+            name=name,
+            customer_id=str(user.id),
+            status="lead",
+            lead_at=lead_at,
+        )
+    except Exception as e:
+        logger.exception(
+            "create_tolt_customer_for_notary_user failed for user %s: %s",
+            notary_user_id,
+            e,
+        )
+        return
+
+    logger.info(
+        "Tolt create_customer finished for NotaryUser %s: %s",
+        notary_user_id,
+        result,
+    )
 
 

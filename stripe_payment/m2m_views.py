@@ -10,7 +10,8 @@ class StandardResultsSetPagination(PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 100
 
-from rest_framework import viewsets
+from rest_framework import viewsets, status
+from rest_framework.response import Response
 
 class NotaryClientCompanyM2MViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -176,6 +177,51 @@ class NotaryUserM2MViewSet(viewsets.ReadOnlyModelViewSet):
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
         
         return Response({"message": "Failed to create user in NotaryDash"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class NotaryUserQueryM2MViewSet(viewsets.ViewSet):
+    """
+    M2M list-only endpoint (same permission as ``OrderM2MViewSet``).
+
+    GET: paginated ``NotaryUser`` rows. Optional query filters (AND together):
+
+    - ``email`` — case-insensitive exact match
+    - ``company_id`` or ``last_company`` — ``NotaryUser.last_company_id``
+    - ``partner_id`` — Tolt ``Partner`` id (string)
+    """
+
+    permission_classes = [IsM2MClient]
+    pagination_class = StandardResultsSetPagination
+
+    def list(self, request, *args, **kwargs):
+        qs = (
+            NotaryUser.objects.all()
+            .select_related("last_company", "partner", "typeform_partner_mapping")
+            .order_by("-created_at")
+        )
+        email = request.query_params.get("email")
+        company_id = request.query_params.get("company_id") or request.query_params.get(
+            "last_company"
+        )
+        partner_id = request.query_params.get("partner_id")
+
+        if email:
+            qs = qs.filter(email__iexact=email.strip())
+        if company_id is not None and str(company_id).strip() != "":
+            try:
+                qs = qs.filter(last_company_id=int(company_id))
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "company_id / last_company must be an integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        if partner_id is not None and str(partner_id).strip() != "":
+            qs = qs.filter(partner_id=str(partner_id).strip())
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(qs, request, view=self)
+        serializer = NotaryUserSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

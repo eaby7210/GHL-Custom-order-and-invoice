@@ -128,6 +128,24 @@ class NotaryCreationView(APIView):
 
         print(f"Using recent response: {recent_response.id}") #type:ignore
 
+        partner_mapping = recent_response.resolve_typeform_partner_mapping()
+        if partner_mapping:
+            print(
+                f"[NotaryCreationView] Typeform partner mapping: "
+                f"{partner_mapping.id} ({partner_mapping.choice_label})"
+            )
+
+        tolt_partner = None
+        if partner_mapping and partner_mapping.partner_id:
+            tolt_partner = partner_mapping.partner
+        else:
+            tolt_partner = recent_response.resolve_partner_from_hidden_tolt_link()
+            if tolt_partner:
+                print(
+                    f"[NotaryCreationView] Partner from Typeform hidden ref → "
+                    f"Tolt Link (partner_id={tolt_partner.id})"
+                )
+
         client_payload = {
             "company_name": recent_response.get_answer_by_title("Company"),
         }
@@ -208,27 +226,37 @@ class NotaryCreationView(APIView):
             # Check for existing users to determine admin status
             is_first_user = not NotaryUser.objects.filter(last_company_id=company_id).exists()
             
+            user_defaults = {
+                "first_name": user_data.get("first_name"),
+                "last_name": user_data.get("last_name"),
+                "email": user_data.get("email"),
+                "photo_url": user_data.get("photo_url"),
+                "country_code": user_data.get("country_code"),
+                "tz": user_data.get("tz"),
+                "attr": user_data.get("attr", {}),
+                "last_login_at": user_data.get("last_login_at"),
+                "last_ip": user_data.get("last_ip"),
+                "last_company_id": user_data.get("last_company_id", company_id),
+                "email_unverified": user_data.get("email_unverified"),
+                "disabled": user_data.get("disabled"),
+                "deleted_at": user_data.get("deleted_at"),
+                "created_at": user_data.get("created_at"),
+                "updated_at": user_data.get("updated_at"),
+                "type": user_data.get("type"),
+            }
+            # Link NotaryUser ↔ TypeformPartnerMapping; Tolt Partner from
+            # mapping.partner or, if missing, from hidden["ref"] → Link.value.
+            if partner_mapping is not None:
+                user_defaults["typeform_partner_mapping"] = partner_mapping
+                if partner_mapping.partner_id:
+                    user_defaults["partner_id"] = partner_mapping.partner_id
+            if tolt_partner is not None:
+                user_defaults["partner_id"] = tolt_partner.id
+
             # ✅ Save NotaryUser locally
             user_obj, _ = NotaryUser.objects.update_or_create(
                 id=user_id,
-                defaults={
-                    "first_name": user_data.get("first_name"),
-                    "last_name": user_data.get("last_name"),
-                    "email": user_data.get("email"),
-                    "photo_url": user_data.get("photo_url"),
-                    "country_code": user_data.get("country_code"),
-                    "tz": user_data.get("tz"),
-                    "attr": user_data.get("attr", {}),
-                    "last_login_at": user_data.get("last_login_at"),
-                    "last_ip": user_data.get("last_ip"),
-                    "last_company_id": user_data.get("last_company_id", company_id),
-                    "email_unverified": user_data.get("email_unverified"),
-                    "disabled": user_data.get("disabled"),
-                    "deleted_at": user_data.get("deleted_at"),
-                    "created_at": user_data.get("created_at"),
-                    "updated_at": user_data.get("updated_at"),
-                    "type": user_data.get("type"),
-                }
+                defaults=user_defaults,
             )
             
             # Apply admin status if applicable and new logic dictates
@@ -239,6 +267,9 @@ class NotaryCreationView(APIView):
                 user_obj.is_admin = True
                 user_obj.save()
 
+            if user_obj.partner_id:
+                from .tasks import create_tolt_customer_for_notary_user
+                create_tolt_customer_for_notary_user.delay(user_obj.id)
 
             print(f"✅ Saved NotaryUser: {user_obj}")
 
