@@ -53,7 +53,7 @@ class Command(BaseCommand):
             ),
         )
 
-    def _sync_partner_from_typeform_mapping(self, dry_run):
+    def _sync_partner_from_typeform_mapping(self, dry_run, verbosity=1):
         qs = (
             NotaryUser.objects.filter(
                 typeform_partner_mapping__isnull=False,
@@ -87,7 +87,7 @@ class Command(BaseCommand):
 
             if not partner_id:
                 skipped_mapping_without_partner += 1
-                if self.verbosity >= 2:
+                if verbosity >= 2:
                     self.stdout.write(
                         self.style.WARNING(
                             f"  skip NotaryUser id={nu.id}: "
@@ -121,7 +121,10 @@ class Command(BaseCommand):
         skip_associate = options["skip_associate"]
 
         if options["sync_partner_from_mapping"]:
-            self._sync_partner_from_typeform_mapping(dry_run)
+            self._sync_partner_from_typeform_mapping(
+                dry_run,
+                verbosity=options.get("verbosity", 1),
+            )
 
         if not skip_associate:
             qs = NotaryUser.objects.all().order_by("id")
