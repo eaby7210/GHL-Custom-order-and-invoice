@@ -7,6 +7,7 @@ from rest_framework import viewsets, mixins, generics
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.filters import SearchFilter
+from django_filters.rest_framework import DjangoFilterBackend
 from stripe_payment.models import (
     Order, ALaCarteService,
     StripeCharge, CheckoutSession, NotaryClientCompany,
@@ -811,6 +812,12 @@ class StandardResultsSetPagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = 'page_size'
     max_page_size = 100
+
+
+class OrderListMaxFivePagination(PageNumberPagination):
+    page_size = 5
+    page_size_query_param = "page_size"
+    max_page_size = 5
 
 class CompanyUserListView(generics.ListAPIView):
     serializer_class = NotaryUserSerializer
@@ -1888,7 +1895,9 @@ def record_payment(invoice_data):
 
 
 
-class OrderRetrieveView(viewsets.GenericViewSet, mixins.RetrieveModelMixin):
+class OrderRetrieveView(
+    viewsets.GenericViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin
+):
     queryset = Order.objects.prefetch_related(
         'a_la_carte_services',
         'a_la_carte_services__items',
@@ -1902,6 +1911,16 @@ class OrderRetrieveView(viewsets.GenericViewSet, mixins.RetrieveModelMixin):
     ).all()
     serializer_class = OrderSerializer
     lookup_field = "stripe_session_id"
+    pagination_class = OrderListMaxFivePagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = [
+        "id",
+        "company_id",
+        "user_id",
+        "owner_id",
+        "client_team_id",
+        "notary_order_id",
+    ]
 
 
 def test_email_template(request, order_id):
