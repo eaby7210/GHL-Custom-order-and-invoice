@@ -20,6 +20,7 @@ from rest_framework import status
 from .serializer import OrderSerializer, NotaryUserSerializer, NotaryClientCompanySerializer
 from core.services import OAuthServices, ContactServices, KeapSocketService
 from core.models import Contact, OAuthToken
+from core.permissions import IsM2MClient
 from django.utils.dateparse import parse_datetime
 from decimal import Decimal
 import json
@@ -1898,6 +1899,7 @@ def record_payment(invoice_data):
 class OrderRetrieveView(
     viewsets.GenericViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin
 ):
+    permission_classes = [IsM2MClient]
     queryset = Order.objects.prefetch_related(
         'a_la_carte_services',
         'a_la_carte_services__items',
