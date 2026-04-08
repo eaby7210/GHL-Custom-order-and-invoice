@@ -135,15 +135,44 @@ class NotaryCreationView(APIView):
                 f"{partner_mapping.id} ({partner_mapping.choice_label})"
             )
 
-        tolt_partner = None
-        if partner_mapping and partner_mapping.partner_id:
-            tolt_partner = partner_mapping.partner
-        else:
-            tolt_partner = recent_response.resolve_partner_from_hidden_tolt_link()
-            if tolt_partner:
+        # Hidden ref → Tolt Link (resolve whenever hidden may carry ref).
+        partner_from_hidden = recent_response.resolve_partner_from_hidden_tolt_link()
+        if partner_from_hidden:
+            print(
+                f"[NotaryCreationView] Partner from Typeform hidden ref → "
+                f"Tolt partner_id={partner_from_hidden.id}"
+            )
+
+        # partner_id: use mapping FK if set, else hidden ref; vice versa is the
+        # same (one or the other). Skip only when neither yields a partner.
+        partner_id_from_mapping = None
+        if partner_mapping is not None:
+            partner_id_from_mapping = partner_mapping.partner_id
+            if partner_id_from_mapping is None:
+                pmap_partner = getattr(partner_mapping, "partner", None)
+                if pmap_partner is not None:
+                    partner_id_from_mapping = pmap_partner.id
+
+        partner_id_from_hidden = (
+            partner_from_hidden.id if partner_from_hidden is not None else None
+        )
+
+        resolved_partner_id = partner_id_from_mapping or partner_id_from_hidden
+
+        if resolved_partner_id is not None:
+            if not partner_id_from_mapping and partner_id_from_hidden:
                 print(
-                    f"[NotaryCreationView] Partner from Typeform hidden ref → "
-                    f"Tolt Link (partner_id={tolt_partner.id})"
+                    "[NotaryCreationView] partner_id from hidden only "
+                    f"(mapping unset): {resolved_partner_id}"
+                )
+            elif (
+                partner_id_from_mapping
+                and partner_id_from_hidden
+                and partner_id_from_mapping != partner_id_from_hidden
+            ):
+                print(
+                    "[NotaryCreationView] mapping vs hidden differ; "
+                    f"using mapping partner_id={partner_id_from_mapping}"
                 )
 
         client_payload = {
@@ -244,14 +273,12 @@ class NotaryCreationView(APIView):
                 "updated_at": user_data.get("updated_at"),
                 "type": user_data.get("type"),
             }
-            # Link NotaryUser ↔ TypeformPartnerMapping; Tolt Partner from
-            # mapping.partner or, if missing, from hidden["ref"] → Link.value.
+            # Link mapping row when present; always set partner_id when we
+            # resolved one (mapping FK or hidden ref — partner_id is canonical).
             if partner_mapping is not None:
                 user_defaults["typeform_partner_mapping"] = partner_mapping
-                if partner_mapping.partner_id:
-                    user_defaults["partner_id"] = partner_mapping.partner_id
-            if tolt_partner is not None:
-                user_defaults["partner_id"] = tolt_partner.id
+            if resolved_partner_id is not None:
+                user_defaults["partner_id"] = resolved_partner_id
 
             # ✅ Save NotaryUser locally
             user_obj, _ = NotaryUser.objects.update_or_create(
