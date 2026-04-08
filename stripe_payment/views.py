@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework import viewsets, mixins, generics
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.filters import SearchFilter
+from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from stripe_payment.models import (
     Order, ALaCarteService,
@@ -1912,7 +1912,7 @@ class OrderRetrieveView(
     serializer_class = OrderSerializer
     lookup_field = "stripe_session_id"
     pagination_class = OrderListMaxFivePagination
-    filter_backends = [DjangoFilterBackend]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = [
         "id",
         "company_id",
@@ -1921,6 +1921,8 @@ class OrderRetrieveView(
         "client_team_id",
         "notary_order_id",
     ]
+    ordering_fields = ["created_at", "accepted_at"]
+    ordering = ["-accepted_at"]
 
 
 def test_email_template(request, order_id):
