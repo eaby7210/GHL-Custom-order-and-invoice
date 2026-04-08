@@ -287,6 +287,9 @@ class NotaryCreationView(APIView):
 
 
 
+SERVICE_LOOKUP_CACHE_SECONDS = 15 * 60
+
+
 class ServiceLookupView(APIView):
     """
     Returns the detailed service + bundle structure for a given company.
@@ -294,10 +297,21 @@ class ServiceLookupView(APIView):
     Otherwise:
       - Attempts to find a variance assigned to the company.
       - Falls back to default if none exists.
+
+    Successful responses are cached for SERVICE_LOOKUP_CACHE_SECONDS (15 minutes).
     """
+
+    @staticmethod
+    def _service_lookup_cache_key(company_id: str) -> str:
+        return f"order_page:service_lookup:v1:{company_id.strip()}"
 
     def get(self, request, company_id: str):
         try:
+            cache_key = self._service_lookup_cache_key(company_id)
+            cached_payload = cache.get(cache_key)
+            if cached_payload is not None:
+                return Response(cached_payload, status=status.HTTP_200_OK)
+
             # Case 1: If explicitly requesting the default
             if company_id.lower() == "default":
                 variance = ServiceVariance.get_default()
@@ -333,7 +347,9 @@ class ServiceLookupView(APIView):
 
             # Serialize result
             serializer = ServiceVarianceSerializer(variance)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            data = serializer.data
+            cache.set(cache_key, data, SERVICE_LOOKUP_CACHE_SECONDS)
+            return Response(data, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response(

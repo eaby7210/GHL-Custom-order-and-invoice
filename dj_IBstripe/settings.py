@@ -35,7 +35,7 @@ REDIRECT_URI = config('REDIRECT_URI')
 
 GOOGLE_API_KEY = config('GOOGLE_API_KEY')
 STRIPE_TEST = str(config('STRIPE_LIVE')).lower() != 'true' if config('STRIPE_LIVE') else True
-
+# print(f"STRIPE_TEST: {STRIPE_TEST}")
 if STRIPE_TEST:
   
     STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY_TEST')

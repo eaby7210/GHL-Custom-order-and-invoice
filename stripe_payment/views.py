@@ -31,7 +31,11 @@ from .utils import (
     generate_order_line_items,
     list_payment_methods,attach_payment_method,
     set_default_payment_method, get_coupon,
-    apply_coupon_to_customer
+    apply_coupon_to_customer,
+    stripe_invoice_footer_for_order,
+    native_stripe_invoice_lines_for_order,
+    discount_amount_cents_from_event_dict,
+    resolve_stripe_customer_id_for_order,
 )
 from .services import InvoiceServices, NotaryDashServices
 from .serializer import OrderSerializer
@@ -1861,6 +1865,128 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
         print(f"=== BUILD INVOICE PAYLOAD DEBUG END (FAILURE) ===")
         
     return invoice_data, notary_order
+
+
+def _sync_order_service_type_for_line_items(order: Order) -> None:
+    """In-memory only; mirrors build_invoice_payload bundle/ALC labeling."""
+    bundles = order.bundles.all()
+    services = order.a_la_carte_services.all()
+    if bundles.exists() and services.exists():
+        order.service_type = "mixed"
+    elif bundles.exists():
+        order.service_type = "bundled"
+    elif services.exists():
+        order.service_type = "a_la_carte"
+
+
+def create_stripe_invoice_for_order(
+    order: Order,
+    event_obj,
+    client_user,
+    *,
+    stripe_customer_id=None,
+    currency="usd",
+    apply_event_discount=True,
+    manual_capture=True,
+    description=None,
+):
+    """
+    Create a draft Stripe Invoice (Invoice + InvoiceItem lines), same line
+    composition and footer strategy as management/commands/test_stripe_invoice.py:
+    lines come from generate_order_line_items; footer from
+    invoice_notes_stripe_footer.txt / invoice_notes.html.
+
+    Uses ``order``, ``event_obj`` (checkout.session or payment_intent dict), and
+    ``client_user`` for invoice metadata only. No GHL contact, location_id, or
+    OAuth.
+
+    Optional fixed discount from ``event_obj`` total_details/amount_details
+    ``amount_discount`` (cents), applied via a one-time Coupon on the draft
+    invoice (Stripe does not allow negative InvoiceItem amounts).
+
+    Does not finalize, pay, or capture. Set ``manual_capture=True`` to apply
+    ``payment Settings`` like test_stripe_invoice.
+
+    Returns:
+        stripe.Invoice (retrieved after items/discount/method options).
+
+    Raises:
+        ValueError: no resolvable Stripe customer for the order.
+        stripe.StripeError: API errors.
+    """
+    _sync_order_service_type_for_line_items(order)
+    customer_id = resolve_stripe_customer_id_for_order(order, stripe_customer_id)
+    if not customer_id:
+        raise ValueError(
+            "Stripe customer required: pass stripe_customer_id= or set "
+            "NotaryClientCompany.stripe_customer_id for order.company_id."
+        )
+    currency = (currency or "usd").lower()
+    footer = stripe_invoice_footer_for_order(order)
+    meta = {
+        "source": f"NotaryDash Order #{order.notary_order_id}",
+        "order_id": str(order.id),
+    }
+    if getattr(order, "stripe_session_id", None):
+        meta["stripe_session_id"] = str(order.stripe_session_id)
+    if client_user:
+        em = client_user.get("email")
+        if em:
+            meta["client_email"] = str(em)[:500]
+        name = client_user.get("name")
+        if name:
+            meta["client_name"] = str(name)[:500]
+        cuid = client_user.get("id")
+        if cuid is not None:
+            meta["client_user_id"] = str(cuid)
+    if event_obj and event_obj.get("id"):
+        meta["event_object_id"] = str(event_obj.get("id"))[:255]
+        meta["event_object"] = str(event_obj.get("object") or "")[:50]
+
+    inv_params = {
+        "customer": customer_id,
+        "collection_method": "charge_automatically",
+        "auto_advance": False,
+        "currency": currency,
+        "description": description
+        or (f"Order #{order.id} — {order.company_name or 'Notary services'}"),
+        "footer": footer,
+        "metadata": meta,
+    }
+    invoice = stripe.Invoice.create(**inv_params)
+    for line in native_stripe_invoice_lines_for_order(order):
+        stripe.InvoiceItem.create(
+            customer=customer_id,
+            invoice=invoice.id,
+            currency=currency,
+            amount=line["amount"],
+            description=line["description"],
+            metadata=line.get("metadata") or {},
+        )
+    discount_cents = (
+        discount_amount_cents_from_event_dict(event_obj)
+        if apply_event_discount
+        else 0
+    )
+    if discount_cents > 0:
+        coupon = stripe.Coupon.create(
+            amount_off=discount_cents,
+            currency=currency,
+            duration="once",
+            name=f"Checkout discount (order {order.id})",
+        )
+        stripe.Invoice.modify(invoice.id, discounts=[{"coupon": coupon.id}])
+    if manual_capture:
+        stripe.Invoice.modify(
+            invoice.id,
+            payment_settings={
+                "payment_method_options": {
+                    "card": {"capture_method": "manual"},
+                },
+            },
+        )
+    return stripe.Invoice.retrieve(invoice.id)
+
 
 def send_invoice(invoice_data):
     oauth_obj = OAuthToken.objects.get(LocationId=invoice_data.get("altId"))

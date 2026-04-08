@@ -2,9 +2,13 @@ from core.services import OAuthServices
 import requests
 import json, time
 from django.conf import settings
+from django.core.cache import cache
 from requests.exceptions import RequestException
 
 DEFAULT_TIMEOUT = 25
+
+# NotaryDash get_client_one_user — avoid hammering API for stable profile data.
+NOTARY_CLIENT_ONE_USER_CACHE_SECONDS = 15 * 24 * 60 * 60
 
 def request_with_retry(url, headers, params=None, max_retries=5, delay=30, timeout=DEFAULT_TIMEOUT):
     """
@@ -211,13 +215,25 @@ class NotaryDashServices:
     
     @staticmethod
     def get_client_one_user(client_id, user_id):
+        env_tag = "test" if settings.NOTARY_TEST else "prod"
+        cache_key = (
+            "stripe_payment:notarydash:client_one_user:v1:"
+            f"{env_tag}:{client_id}:{user_id}"
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            print("✅ Single client user (cache hit).")
+            return cached
+
         url = f"{BASE_URL}/api/v2/clients/{client_id}/users/{user_id}"
 
         response = request_with_retry(url, headers=Notary_header)
 
         if response and 200 <= response.status_code < 300:
-            print(f"✅ Single client user retrieved successfully.")
-            return response.json()
+            print("✅ Single client user retrieved successfully.")
+            payload = response.json()
+            cache.set(cache_key, payload, NOTARY_CLIENT_ONE_USER_CACHE_SECONDS)
+            return payload
 
         print(f"❌ Failed: {response.status_code if response else 'No Response'}")
         return None

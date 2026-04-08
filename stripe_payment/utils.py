@@ -1,13 +1,19 @@
 import stripe
 from stripe import Coupon as stripe_coupon, PromotionCode, ListObject
 from django.conf import settings
+from django.template import TemplateDoesNotExist
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
 from decimal import Decimal
 from stripe_payment.models import (
-    Coupon, Order,ALaCarteService,
-    
+    Coupon,
+    Order,
+    ALaCarteService,
+    NotaryClientCompany,
 )
-
 import json
+import re
+from typing import Optional
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -163,6 +169,128 @@ def generate_order_line_items(order: Order):
         })
         
     return line_items
+
+
+# Stripe Invoice.footer max length (API); same cap as test_stripe_invoice command.
+STRIPE_INVOICE_FOOTER_MAX_LEN = 5000
+
+
+def _truncate_stripe_invoice_footer(text):
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text) <= STRIPE_INVOICE_FOOTER_MAX_LEN:
+        return text
+    return text[: STRIPE_INVOICE_FOOTER_MAX_LEN - 3] + "..."
+
+
+def _normalize_stripe_footer_text(text):
+    if not text:
+        return ""
+    out_lines = []
+    prev_blank = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if not prev_blank:
+                out_lines.append("")
+            prev_blank = True
+        else:
+            prev_blank = False
+            out_lines.append(stripped)
+    return "\n".join(out_lines).strip()
+
+
+def _html_to_stripe_footer(html_fragment):
+    plain = strip_tags(html_fragment or "")
+    plain = plain.replace("\n", " ")
+    plain = re.sub(r"\s+", " ", plain).strip()
+    return _truncate_stripe_invoice_footer(plain)
+
+
+def stripe_invoice_footer_for_order(order: Order) -> str:
+    """
+    Plain-text Stripe Invoice.footer from the same templates as
+    management/commands/test_stripe_invoice.py (not HTML).
+    """
+    order_status_emails_list = []
+    raw_emails = getattr(order, "order_status_emails", None) or ""
+    if raw_emails:
+        order_status_emails_list = raw_emails.split("\n")
+    ctx = {"order": order, "order_status_emails_list": order_status_emails_list}
+    footer = None
+    try:
+        raw = render_to_string("invoice_notes_stripe_footer.txt", ctx)
+        footer = _normalize_stripe_footer_text(raw)
+    except TemplateDoesNotExist:
+        pass
+    if footer is None:
+        try:
+            html = render_to_string("invoice_notes.html", ctx)
+            footer = _html_to_stripe_footer(html)
+        except TemplateDoesNotExist:
+            footer = (
+                f"[Order #{order.id}] Add templates/invoice_notes_stripe_footer.txt "
+                "or invoice_notes.html."
+            )
+            footer = _truncate_stripe_invoice_footer(footer)
+    return _truncate_stripe_invoice_footer(footer)
+
+
+def native_stripe_invoice_lines_for_order(order: Order):
+    """
+    Line specs for stripe.InvoiceItem.create: amount (positive cents), description,
+    metadata — derived from generate_order_line_items (bundles, a la carte,
+    fallback, order protection).
+    """
+    lines = []
+    for li in generate_order_line_items(order):
+        pd = li["price_data"]
+        qty = int(li.get("quantity") or 1)
+        amt = int(pd["unit_amount"]) * qty
+        prod = pd.get("product_data") or {}
+        name = prod.get("name") or "Line item"
+        desc = prod.get("description") or ""
+        description = name if not desc else f"{name} — {desc}"
+        if len(description) > 500:
+            description = description[:497] + "..."
+        meta = {}
+        for k, v in (prod.get("metadata") or {}).items():
+            meta[str(k)[:40]] = str(v)[:500]
+        meta.setdefault("source", "generate_order_line_items")
+        lines.append({"amount": amt, "description": description, "metadata": meta})
+    return lines
+
+
+def discount_amount_cents_from_event_dict(event_obj) -> int:
+    """Match build_invoice_payload: checkout.session total_details vs PI amount_details."""
+    if not event_obj:
+        return 0
+    obj_type = event_obj.get("object")
+    if obj_type == "checkout.session":
+        td = event_obj.get("total_details") or {}
+    else:
+        td = event_obj.get("amount_details") or {}
+    try:
+        return int(td.get("amount_discount") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def resolve_stripe_customer_id_for_order(
+    order: Order, explicit_customer_id: Optional[str] = None
+) -> Optional[str]:
+    if explicit_customer_id:
+        return explicit_customer_id
+    cid = getattr(order, "company_id", None)
+    if cid in (None, ""):
+        return None
+    try:
+        company = NotaryClientCompany.objects.only("stripe_customer_id").get(pk=cid)
+        return company.stripe_customer_id or None
+    except (NotaryClientCompany.DoesNotExist, ValueError, TypeError):
+        return None
+
 
 def create_stripe_session(order: Order, domain, customer_id=None):
     """
