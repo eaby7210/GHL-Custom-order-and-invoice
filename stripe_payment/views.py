@@ -81,9 +81,19 @@ class FormSubmissionAPIView(APIView):
             msg = "Company ID and User ID are required."
             return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            response = NotaryDashServices.get_client(company_id)
-            if not response:
-                return Response({"message":"Error on fetching Client"},status=status.HTTP_400_BAD_REQUEST)
+            response, client_fetch_err = NotaryDashServices.get_client_once(
+                company_id
+            )
+            if client_fetch_err == "rate_limited":
+                return Response(
+                    {"message": "Too many requests. Try again later."},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+            if client_fetch_err or not response:
+                return Response(
+                    {"message": "Error on fetching Client"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             else:
                 owner_id = response.get("data",{}).get("owner_id")
                 company_name = response.get("data",{}).get("company_name")
