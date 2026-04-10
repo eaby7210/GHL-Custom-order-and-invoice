@@ -63,13 +63,13 @@ class TypeFormWebhook(APIView):
                 resp_obj = TypeformParser.save_webhook(payload)
                 
                 # Check for Partner Mappings and update GHL contact
-                email = resp_obj.get_answer_by_title("Email")
-                if email:
-                    from .tasks import ghl_update_contact
-                    print(f"Triggering ghl_update_contact for {email}")
-                    ghl_update_contact(email, resp_obj.id)
-                else:
-                    print("No email found in Typeform response, skipping ghl_update_contact task.")
+                # email = resp_obj.get_answer_by_title("Email")
+                # if email:
+                #     from .tasks import ghl_update_contact
+                #     print(f"Triggering ghl_update_contact for {email}")
+                #     ghl_update_contact(email, resp_obj.id)
+                # else:
+                #     print("No email found in Typeform response, skipping ghl_update_contact task.")
 
                 return Response({"status": "ok", "response_id": resp_obj.id}, status=status.HTTP_201_CREATED) #type:ignore
 
