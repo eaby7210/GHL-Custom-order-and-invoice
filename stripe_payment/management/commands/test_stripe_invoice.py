@@ -408,10 +408,22 @@ class Command(BaseCommand):
                     },
                 },
             )
+            self.stdout.write("Applied payment_settings.card.capture_method=manual")
+        except stripe.InvalidRequestError as e:
+            if "capture_method" in (getattr(e, "param", None) or ""):
+                self.stdout.write(
+                    self.style.WARNING(
+                        "Stripe rejected capture_method on Invoice payment_settings "
+                        "(current API); continuing without it — PI may not be "
+                        "requires_capture after pay."
+                    )
+                )
+            else:
+                raise CommandError(
+                    f"Invoice.modify (manual capture) failed: {e}"
+                ) from e
         except stripe.StripeError as e:
             raise CommandError(f"Invoice.modify (manual capture) failed: {e}") from e
-
-        self.stdout.write("Applied payment_settings.card.capture_method=manual")
 
         try:
             invoice = stripe.Invoice.finalize_invoice(invoice.id)

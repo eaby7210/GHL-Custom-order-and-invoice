@@ -32,10 +32,11 @@ from .utils import (
     list_payment_methods,attach_payment_method,
     set_default_payment_method, get_coupon,
     apply_coupon_to_customer,
-    stripe_invoice_footer_for_order,
-    native_stripe_invoice_lines_for_order,
     discount_amount_cents_from_event_dict,
-    resolve_stripe_customer_id_for_order,
+    create_draft_stripe_invoice_for_order,
+    apply_stripe_invoice_discount_cents,
+    retrieve_invoice,
+    stripe_invoice_description_for_order,
 )
 from .services import InvoiceServices, NotaryDashServices
 from .serializer import OrderSerializer
@@ -363,6 +364,14 @@ class FormSubmissionAPIView(APIView):
             
             stripe_session = create_stripe_session(order, frontend_domain, customer_id=company.stripe_customer_id)
             order.stripe_session_id = stripe_session.id
+            if order.invoice_id:
+                try:
+                    inv = stripe.Invoice.retrieve(order.invoice_id)
+                    md = dict(inv.metadata or {})
+                    md["stripe_session_id"] = stripe_session.id
+                    stripe.Invoice.modify(order.invoice_id, metadata=md)
+                except Exception as e:
+                    print(f"⚠️ Could not attach session id to invoice metadata: {e}")
             order.save()
 
             return Response({
@@ -380,9 +389,10 @@ class FormSubmissionAPIView(APIView):
 class InvoiceView(APIView):
     def get(self, request, stripe_session_id):
         try:
-            token_obj = OAuthServices.get_valid_access_token_obj()
+            # token_obj = OAuthServices.get_valid_access_token_obj()
             order = Order.objects.get(stripe_session_id=stripe_session_id)
-            response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+            # response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+            response = retrieve_invoice(order.invoice_id)
             
             if not response:
                 return self._handle_response(request, {"error": "Invoice not found"}, status.HTTP_404_NOT_FOUND)
@@ -423,17 +433,17 @@ def retrieve_invoice_by_payment_intent(request, payment_intent_id):
              return Response({"error": "Order not found for this PaymentIntent"}, status=status.HTTP_404_NOT_FOUND)
         
         # 2. Get OAuth token
-        token_obj = OAuthServices.get_valid_access_token_obj()
-        if not token_obj:
-            return Response({"error": "Authentication service unavailable"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        # token_obj = OAuthServices.get_valid_access_token_obj()
+        # if not token_obj:
+        #     return Response({"error": "Authentication service unavailable"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         # 3. Retrieve invoice
         if not order.invoice_id:
              # Fallback check - maybe invoice creation failed or is pending?
              return Response({"error": "Invoice not yet generated for this order"}, status=status.HTTP_404_NOT_FOUND)
              
-        response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
-
+        # response = InvoiceServices.get_invoice(token_obj.LocationId, order.invoice_id)
+        response = retrieve_invoice(order.invoice_id)
         if not response:
             return Response({"error": "Invoice not found in external system"}, status=status.HTTP_404_NOT_FOUND)
         
@@ -1313,11 +1323,19 @@ def process_order(event,order_obj):
         user_id = order_obj.user_id
 
         # --- IDEMPOTENCY CHECK ---
-        # If the order already has an invoice_id, it means it has been processed.
-        # We return True to indicate "success" (already handled) and prevent duplicate work.
-        if order_obj.invoice_id:
-            print(f"✅ Order {order_obj.id} already processed (Invoice ID: {order_obj.invoice_id}). Skipping duplicate processing.")
-            return True
+        # Draft invoice is created at Checkout / PI creation; invoice_id is set early.
+        # Skip only when Notary order exists and the Stripe invoice is already paid.
+        if order_obj.notary_order_id and order_obj.invoice_id:
+            try:
+                inv_chk = stripe.Invoice.retrieve(order_obj.invoice_id)
+                if getattr(inv_chk, "status", None) == "paid":
+                    print(
+                        f"✅ Order {order_obj.id} already fulfilled "
+                        f"(notary_order_id={order_obj.notary_order_id}, invoice paid)."
+                    )
+                    return True
+            except Exception as e:
+                print(f"⚠️ Idempotency invoice check: {e}")
         # -------------------------
         
         print("Calling NotaryDashServices.get_client_one_user...")
@@ -1332,101 +1350,84 @@ def process_order(event,order_obj):
         print(f"Contact phone: {contact_phone}, Contact email: {contact_email}")
         
         print("Getting OAuth token...")
-        token_obj = OAuthServices.get_valid_access_token_obj()
-        print(f"Token location ID: {token_obj.LocationId if token_obj else 'None'}")
+        # token_obj = OAuthServices.get_valid_access_token_obj()
+        # print(f"Token location ID: {token_obj.LocationId if token_obj else 'None'}")
         
         print("Searching for existing contacts...")
-        search_response = ContactServices.search_contacts(token_obj.LocationId, query={
-            "locationId": "n7iGMwfy1T5lZZacxygj",
-            "page": 1,
-            "pageLimit": 20,
-            "filters": [
-                {
-                    "field": "email",
-                    "operator": "eq",
-                    "value": contact_email
-                },
-                # {
-                #     "field": "phone",
-                #     "operator": "eq",
-                #     "value": contact_phone
-                # },
-            ],
-            "sort": [
-                {
-                    "field": "dateAdded",
-                    "direction": "desc"
-                }
-            ]
-        })
+        # search_response = ContactServices.search_contacts(token_obj.LocationId, query={
+        #     "locationId": "n7iGMwfy1T5lZZacxygj",
+        #     "page": 1,
+        #     "pageLimit": 20,
+        #     "filters": [
+        #         {
+        #             "field": "email",
+        #             "operator": "eq",
+        #             "value": contact_email
+        #         },
+        #         # {
+        #         #     "field": "phone",
+        #         #     "operator": "eq",
+        #         #     "value": contact_phone
+        #         # },
+        #     ],
+        #     "sort": [
+        #         {
+        #             "field": "dateAdded",
+        #             "direction": "desc"
+        #         }
+        #     ]
+        # })
         
-        # print(f"Contact search response: {json.dumps(search_response, indent=4)}")
+        # # print(f"Contact search response: {json.dumps(search_response, indent=4)}")
         
-        if len(search_response.get("contacts", [])) > 0:
-            contact_data = search_response["contacts"][0]
-            # print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
-        else:
-            client_attr = client_user.get("attr")
-            notary_phone = (client_attr.get("phone") if client_attr.get("phone") else client_attr.get("mobile_phone") ) #type: ignore
-            ghl_phone = notary_phone if notary_phone else contact_phone 
-            print("Creating new contact...")
-            contact = {
-                "firstName": client_user.get("first_name") if client_user.get("first_name") else order_obj.contact_first_name_sched,
-                "lastName": client_user.get("last_name") if client_user.get("last_name") else order_obj.contact_last_name_sched,
-                # "name": contact_name,
-                "locationId": token_obj.LocationId,
-                "email": contact_email,
-                "phone": ghl_phone,
-                "country": "US",  
-                "type": "customer"  
-            }
-            contact_data, status = ContactServices.post_contact(token_obj.LocationId, contact)
-            print(f"Contact creation status: {status}")
+        # if len(search_response.get("contacts", [])) > 0:
+        #     contact_data = search_response["contacts"][0]
+        #     # print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
+        # else:
+        #     client_attr = client_user.get("attr")
+        #     notary_phone = (client_attr.get("phone") if client_attr.get("phone") else client_attr.get("mobile_phone") ) #type: ignore
+        #     ghl_phone = notary_phone if notary_phone else contact_phone 
+        #     print("Creating new contact...")
+        #     contact = {
+        #         "firstName": client_user.get("first_name") if client_user.get("first_name") else order_obj.contact_first_name_sched,
+        #         "lastName": client_user.get("last_name") if client_user.get("last_name") else order_obj.contact_last_name_sched,
+        #         # "name": contact_name,
+        #         "locationId": token_obj.LocationId,
+        #         "email": contact_email,
+        #         "phone": ghl_phone,
+        #         "country": "US",  
+        #         "type": "customer"  
+        #     }
+        #     contact_data, status = ContactServices.post_contact(token_obj.LocationId, contact)
+        #     print(f"Contact creation status: {status}")
             
-            if status != 201:
-                contact_id = contact_data.get("meta", {}).get("contactId", None)
-                print(f"Contact creation failed with status {status}. Attempting to retrieve existing contact by ID: {contact_id}")
-                if contact_id:
-                    contact_data = ContactServices.get_contact(token_obj.LocationId, contact_id)
-                    if contact_data:
-                        ContactServices.save_contact(contact_data)
-                    contact_data["id"] = contact_id
-                    # print(f"Contact creation conflicted with: {contact_data.get('id')} Using {json.dumps(contact_data, indent=4)}")
-            ContactServices.save_contact(contact_data)
+        #     if status != 201:
+        #         contact_id = contact_data.get("meta", {}).get("contactId", None)
+        #         print(f"Contact creation failed with status {status}. Attempting to retrieve existing contact by ID: {contact_id}")
+        #         if contact_id:
+        #             contact_data = ContactServices.get_contact(token_obj.LocationId, contact_id)
+        #             if contact_data:
+        #                 ContactServices.save_contact(contact_data)
+        #             contact_data["id"] = contact_id
+        #             # print(f"Contact creation conflicted with: {contact_data.get('id')} Using {json.dumps(contact_data, indent=4)}")
+        #     ContactServices.save_contact(contact_data)
         
-        print("=== ABOUT TO CALL BUILD_INVOICE_PAYLOAD ===")
-        print(f"Parameters: order_obj={order_obj.id}, contact={contact_data.get('id', 'Unknown')}, location_id={token_obj.LocationId}")
-        
-        invoice_payload, notary_order = build_invoice_payload(
-            order_obj, contact=contact_data, location_id=token_obj.LocationId,
-            event_obj=obj, client_user=client_user
+        print("=== ABOUT TO CALL BUILD_STRIPE_INVOICE_AND_NOTARY_ORDER ===")
+        print(f"Parameters: order_obj={order_obj.id}")
+
+        stripe_invoice, notary_order = build_stripe_invoice_and_notary_order(
+            order_obj, obj, client_user
         )
-        
-        print("=== BUILD_INVOICE_PAYLOAD COMPLETED ===")
-        print(f"Invoice payload returned: {invoice_payload is not None}")
-        
-        if not invoice_payload:
-            print("ERROR: build_invoice_payload returned None")
+
+        print("=== BUILD_STRIPE_INVOICE_AND_NOTARY_ORDER COMPLETED ===")
+        if not notary_order:
+            print("ERROR: Notary order not created; Stripe draft invoice may exist.")
             return None
-        else:
-            print("Calling InvoiceServices.post_invoice...")
-            response = InvoiceServices.post_invoice(token_obj.LocationId, invoice_payload)
-            # print(f"Invoice response: {json.dumps(response, indent=4)}")
-            
-            if response:
-                print("Invoice created successfully, updating order...")
-                order_obj.location_id = token_obj.LocationId
-                order_obj.invoice_id = response.get("_id")
-                order_obj.save()
-                print(f"Order updated with invoice_id: {order_obj.invoice_id}")
-            else:
-                print("Failed to create invoice, skipping sending and payment recording.")
-                return None
-                
-            print("Sending invoice...")
-            send_invoice(response)
-            print("Recording payment...")
-            record_payment(response)
+
+        # order_obj.location_id = token_obj.LocationId
+        order_obj.invoice_id = stripe_invoice.id
+        order_obj.save()
+        print(f"Order updated with Stripe invoice_id: {order_obj.invoice_id}")
         if payment_intent_id:
             try:
                 pi = stripe.PaymentIntent.retrieve(payment_intent_id)
@@ -1451,8 +1452,8 @@ def process_order(event,order_obj):
                 print(f"❌ Failed to update PaymentIntent metadata: {e}")
         else:
             print("⚠️ No payment_intent ID found in session")
-        from stripe_payment.tasks import process_tos_for_ghl
-        process_tos_for_ghl(order_obj.user_id,contact_data["id"])
+        # from stripe_payment.tasks import process_tos_for_ghl
+        # process_tos_for_ghl(order_obj.user_id,contact_data["id"])
 
         return True # Explicitly return True on success
     
@@ -1465,7 +1466,123 @@ def process_order(event,order_obj):
     
 
 
-def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj):
+def _ghl_invoice_items_and_notary_product_names(order: Order, event_obj):
+    """
+    GHL-format invoice line items plus the NotaryDash product name string used
+    in ``build_notary_order``. Mirrors ``build_invoice_payload`` line-item
+    logic; updates ``order.service_type`` for bundle/mixed/a_la_carte.
+    """
+    def build_item(name, description, price, currency="USD", qty=1):
+        return {
+            "name": name,
+            "description": description or "",
+            "currency": currency,
+            "amount": float(price),
+            "qty": qty,
+            "taxes": [],
+            "isSetupFeeItem": False,
+            "type": "one_time",
+            "taxInclusive": True,
+            "discount": {
+                "value": 0,
+                "type": "percentage",
+                "validOnProductIds": [],
+            },
+        }
+
+    items = []
+    notary_product_names = []
+    amount_cents = (
+        event_obj.get("amount_total")
+        if event_obj.get("object") == "checkout.session"
+        else event_obj.get("amount", 0)
+    )
+    session_total_price = amount_cents / 100 if amount_cents else 0
+    total_bundle_price = 0
+    total_ala_price = 0
+
+    bundles = order.bundles.all()
+    if bundles.exists():
+        for bundle in bundles:
+            total_bundle_price += float(bundle.price or 0)
+            items.append(
+                build_item(
+                    name=bundle.name,
+                    description=bundle.description,
+                    price=bundle.price,
+                )
+            )
+            notary_product_names.append(bundle.name)
+
+    services = order.a_la_carte_services.all()
+    if services.exists():
+        for service in services:
+            for item in service.items.all():
+                submenu_parts = []
+                for sub in item.submenu_items.all():
+                    if sub.value > 0:
+                        label = (
+                            f"{sub.label} X{sub.value}"
+                            if sub.value > 1
+                            else sub.label
+                        )
+                        submenu_parts.append(label)
+                selected_options = item.options.filter(value=True).values_list(
+                    "label", flat=True
+                )
+                title_parts = [item.title]
+                if submenu_parts:
+                    title_parts.append(" + ".join(submenu_parts))
+                option_suffix = (
+                    f" ({' + '.join(selected_options)})" if selected_options else ""
+                )
+                product_name = f"{' + '.join(title_parts)}{option_suffix}"
+                price_value = item.price or item.base_price or 0
+                total_ala_price += float(price_value)
+                items.append(
+                    build_item(
+                        name=product_name,
+                        description=item.subtitle or service.title,
+                        price=price_value,
+                    )
+                )
+                notary_product_names.append(item.item_id)
+
+    if bundles.exists() and services.exists():
+        order.service_type = "mixed"
+    elif bundles.exists():
+        order.service_type = "bundled"
+    elif services.exists():
+        order.service_type = "a_la_carte"
+
+    if not items:
+        items.append(
+            build_item(
+                name="Custom Order",
+                description=f"{order.service_type.title()} Service",
+                price=order.total_price + order.order_protection_price
+                or session_total_price
+                or 0,
+            )
+        )
+        notary_product_names.append("Custom Order")
+
+    if (order.order_protection == True) and (
+        int(Decimal(order.order_protection_price)) > 0
+    ):
+        notary_product_names.append(" +Prt")
+        items.append(
+            build_item(
+                name="Order Protection",
+                description="Optional Order Protection",
+                price=order.order_protection_price,
+            )
+        )
+
+    return items, " ".join(notary_product_names)
+
+
+def build_notary_order(order: Order, prd_name, client_user, event_obj):
     
     """
     Build Notary order payload based on given order and contact.
@@ -1506,7 +1623,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
     html_content = render_to_string(
         "order_product_detail.html", 
         context={
-            "invoice_data":inv_data,
+  
             "order":order
             }
         ).replace("\n", "").replace('"', "'")
@@ -1517,7 +1634,7 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
     order_html_content = render_to_string(
         "order_detail.html", 
         context={
-            "invoice_data":inv_data,
+      
             "order":order,
             "transaction":transaction_details,
             "order_status_emails_list": order_status_emails_list
@@ -1630,18 +1747,18 @@ def build_notary_order(order :Order, inv_data, prd_name, client_user, event_obj)
             print(f"SUCCESS: Sending to Keap successful")
         else:
             print(f"ERROR: Sending to Keap failed")
-        inv_data["invoiceNumber"] = order_id
-        print(f"Updated inv_data with invoiceNumber: {order_id}")
+        
         print(f"=== BUILD NOTARY ORDER DEBUG END (SUCCESS) ===")
         order.save()
-        return inv_data, ord_response
+        return ord_response
     else:
         print(f"ERROR: Notary order creation failed")
         # print(f"Response details: {json.dumps(ord_response, indent=2) if ord_response else 'None'}")
         print(f"=== BUILD NOTARY ORDER DEBUG END (FAILURE) ===")
-        return None, None
-        
-def build_invoice_payload(order: Order , contact, location_id, event_obj, client_user):
+        return None
+
+
+def build_invoice_payload(order: Order, contact, location_id, event_obj, client_user):
     """
     Build JSON payload for invoice based on given order.
     """
@@ -1653,120 +1770,11 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
     # print(f"Event obj: {json.dumps(event_obj, indent=2)}")
     # print(f"Client user: {client_user}")
 
-    def build_item(name, description, price, currency="USD", qty=1):
-        return {
-            "name": name,
-            "description": description or "",
-
-            "currency": currency,
-            "amount": float(price),
-            "qty": qty,
-            "taxes": [],
-            "isSetupFeeItem": False,
-            "type": "one_time",
-            "taxInclusive": True,
-            "discount": {
-                "value": 0,
-                "type": "percentage",
-                "validOnProductIds": []
-            }
-        }
-
-    items = []
-    notary_product_names = []
-    
-    # Handle polymorphic event_obj
-    amount_cents = event_obj.get("amount_total") if event_obj.get("object") == "checkout.session" else event_obj.get("amount", 0)
-    session_total_price = amount_cents / 100 if amount_cents else 0
-    
-    total_bundle_price = 0
-    total_ala_price = 0
-
-
     print(f"Building invoice items for order {order.id} (type: {order.service_type})")
-
-    # 🟩 1. Always include Bundles if any
-    bundles = order.bundles.all()
-    if bundles.exists():
-        print(f"Found {bundles.count()} bundles for order")
-
-        for bundle in bundles:
-            print(f"Processing bundle: {bundle.name} (${bundle.price})")
-            total_bundle_price += float(bundle.price or 0)
-
-            items.append(build_item(
-                name=bundle.name,
-                description=bundle.description,
-                price=bundle.price
-            ))
-            notary_product_names.append(bundle.name)
-
-    # 🟦 2. Include A La Carte services if any
-    services = order.a_la_carte_services.all()
-    if services.exists():
-        print(f"Found {services.count()} A La Carte services")
-
-        for service in services:
-            for item in service.items.all():
-                submenu_parts = []
-                for sub in item.submenu_items.all():
-                    if sub.value > 0:
-                        label = f"{sub.label} X{sub.value}" if sub.value > 1 else sub.label
-                        submenu_parts.append(label)
-
-                # Selected options
-                selected_options = item.options.filter(value=True).values_list("label", flat=True)
-
-                # Build product name
-                title_parts = [item.title]
-                if submenu_parts:
-                    title_parts.append(" + ".join(submenu_parts))
-
-                option_suffix = f" ({' + '.join(selected_options)})" if selected_options else ""
-                product_name = f"{' + '.join(title_parts)}{option_suffix}"
-
-                price_value = item.price or item.base_price or 0
-                total_ala_price += float(price_value)
-
-                items.append(build_item(
-                    name=product_name,
-                    description=item.subtitle or service.title,
-                    price=price_value
-                ))
-                notary_product_names.append(item.item_id)
-
-    # 🟥 3. Handle "mixed" automatically
-    if bundles.exists() and services.exists():
-        order.service_type = "mixed"
-        print(f"Order {order.id} contains both bundles and A La Carte — set as mixed")
-
-    elif bundles.exists():
-        order.service_type = "bundled"
-    elif services.exists():
-        order.service_type = "a_la_carte"
-
-    # 🧮 4. Fallback / combined summary if no line items
-    if not items:
-        print("WARNING: No bundle or A La Carte items found — adding fallback line")
-        items.append(build_item(
-            name="Custom Order",
-            description=f"{order.service_type.title()} Service",
-            price=order.total_price + order.order_protection_price or session_total_price or 0
-        ))
-        notary_product_names.append("Custom Order")
-
-    # 🧾 5. Compute combined totals
-    combined_total = total_bundle_price + total_ala_price
-    print(f"Bundle Total: {total_bundle_price}, ALC Total: {total_ala_price}, Combined: {combined_total}") 
-    if (order.order_protection ==True) and (int(Decimal(order.order_protection_price))>0):
-        notary_product_names.append(" +Prt")
-        items.append(build_item(
-                    name="Order Protection",
-                    description="Optional Order Protection",
-                    price=order.order_protection_price
-                ))
-
-    notary_product_names = " ".join(notary_product_names)
+    items_k, notary_product_names = _ghl_invoice_items_and_notary_product_names(
+        order, event_obj
+    )
+    items = items_k
     print(f"Final notary product names: {notary_product_names}")
     print(f"Total items created: {len(items)}")
 
@@ -1863,30 +1871,20 @@ def build_invoice_payload(order: Order , contact, location_id, event_obj, client
     
     print(f"Initial invoice data created with invoiceNumber: {invoice_data['invoiceNumber']}")
     print(f"Calling build_notary_order with product names: {notary_product_names}")
-    
-    invoice_data, notary_order = build_notary_order(order, inv_data=invoice_data, prd_name=notary_product_names, client_user=client_user, event_obj=event_obj)
-    
-    if invoice_data:
-      
-        print(f"Final invoice data has invoiceNumber: {invoice_data.get('invoiceNumber')}")
-        print(f"=== BUILD INVOICE PAYLOAD DEBUG END (SUCCESS) ===")
-    else:
+
+    notary_order = build_notary_order(
+        order, notary_product_names, client_user, event_obj
+    )
+    if not notary_order:
         print("ERROR: build_notary_order returned None")
         print(f"=== BUILD INVOICE PAYLOAD DEBUG END (FAILURE) ===")
-        
+        return None, None
+    order_id = str(notary_order.get("data", {}).get("id"))
+    invoice_data["invoiceNumber"] = order_id
+    print(f"Final invoice data has invoiceNumber: {invoice_data.get('invoiceNumber')}")
+    print(f"=== BUILD INVOICE PAYLOAD DEBUG END (SUCCESS) ===")
+
     return invoice_data, notary_order
-
-
-def _sync_order_service_type_for_line_items(order: Order) -> None:
-    """In-memory only; mirrors build_invoice_payload bundle/ALC labeling."""
-    bundles = order.bundles.all()
-    services = order.a_la_carte_services.all()
-    if bundles.exists() and services.exists():
-        order.service_type = "mixed"
-    elif bundles.exists():
-        order.service_type = "bundled"
-    elif services.exists():
-        order.service_type = "a_la_carte"
 
 
 def create_stripe_invoice_for_order(
@@ -1897,137 +1895,189 @@ def create_stripe_invoice_for_order(
     stripe_customer_id=None,
     currency="usd",
     apply_event_discount=True,
-    manual_capture=True,
     description=None,
 ):
     """
-    Create a draft Stripe Invoice (Invoice + InvoiceItem lines), same line
-    composition and footer strategy as management/commands/test_stripe_invoice.py:
-    lines come from generate_order_line_items; footer from
-    invoice_notes_stripe_footer.txt / invoice_notes.html.
+    Create a **new** draft Stripe Invoice (same lines as checkout) plus optional
+    discount from the completed session / PaymentIntent (``event_obj``).
 
-    Uses ``order``, ``event_obj`` (checkout.session or payment_intent dict), and
-    ``client_user`` for invoice metadata only. No GHL contact, location_id, or
-    OAuth.
+    Prefer the flow where ``create_stripe_session`` / ``create_payment_intent``
+    already created a draft and set ``order.invoice_id``; use
+    ``build_stripe_invoice_and_notary_order`` for that path.
 
-    Optional fixed discount from ``event_obj`` total_details/amount_details
-    ``amount_discount`` (cents), applied via a one-time Coupon on the draft
-    invoice (Stripe does not allow negative InvoiceItem amounts).
-
-    Does not finalize, pay, or capture. Set ``manual_capture=True`` to apply
-    ``payment Settings`` like test_stripe_invoice.
-
-    Returns:
-        stripe.Invoice (retrieved after items/discount/method options).
-
-    Raises:
-        ValueError: no resolvable Stripe customer for the order.
-        stripe.StripeError: API errors.
+    Does not finalize or charge the invoice.
     """
-    _sync_order_service_type_for_line_items(order)
-    customer_id = resolve_stripe_customer_id_for_order(order, stripe_customer_id)
-    if not customer_id:
-        raise ValueError(
-            "Stripe customer required: pass stripe_customer_id= or set "
-            "NotaryClientCompany.stripe_customer_id for order.company_id."
-        )
-    currency = (currency or "usd").lower()
-    footer = stripe_invoice_footer_for_order(order)
-    meta = {
-        "source": f"NotaryDash Order #{order.notary_order_id}",
-        "order_id": str(order.id),
+    cur = (currency or "usd").lower()
+    extra_meta = {
+        "source": (
+            f"NotaryDash Order #{order.notary_order_id}"
+            if getattr(order, "notary_order_id", None)
+            else "manual_invoice_create"
+        ),
     }
-    if getattr(order, "stripe_session_id", None):
-        meta["stripe_session_id"] = str(order.stripe_session_id)
     if client_user:
         em = client_user.get("email")
         if em:
-            meta["client_email"] = str(em)[:500]
+            extra_meta["client_email"] = str(em)[:500]
         name = client_user.get("name")
         if name:
-            meta["client_name"] = str(name)[:500]
+            extra_meta["client_name"] = str(name)[:500]
         cuid = client_user.get("id")
         if cuid is not None:
-            meta["client_user_id"] = str(cuid)
+            extra_meta["client_user_id"] = str(cuid)
     if event_obj and event_obj.get("id"):
-        meta["event_object_id"] = str(event_obj.get("id"))[:255]
-        meta["event_object"] = str(event_obj.get("object") or "")[:50]
+        extra_meta["event_object_id"] = str(event_obj.get("id"))[:255]
+        extra_meta["event_object"] = str(event_obj.get("object") or "")[:50]
 
-    inv_params = {
-        "customer": customer_id,
-        "collection_method": "charge_automatically",
-        "auto_advance": False,
-        "currency": currency,
-        "description": description
-        or (f"Order #{order.id} — {order.company_name or 'Notary services'}"),
-        "footer": footer,
-        "metadata": meta,
-    }
-    invoice = stripe.Invoice.create(**inv_params)
-    for line in native_stripe_invoice_lines_for_order(order):
-        stripe.InvoiceItem.create(
-            customer=customer_id,
-            invoice=invoice.id,
-            currency=currency,
-            amount=line["amount"],
-            description=line["description"],
-            metadata=line.get("metadata") or {},
-        )
-    discount_cents = (
-        discount_amount_cents_from_event_dict(event_obj)
-        if apply_event_discount
-        else 0
+    inv = create_draft_stripe_invoice_for_order(
+        order,
+        stripe_customer_id=stripe_customer_id,
+        currency=cur,
+        description=description,
+        extra_metadata=extra_meta,
     )
-    if discount_cents > 0:
-        coupon = stripe.Coupon.create(
-            amount_off=discount_cents,
-            currency=currency,
-            duration="once",
-            name=f"Checkout discount (order {order.id})",
+    if apply_event_discount:
+        dc = discount_amount_cents_from_event_dict(event_obj)
+        apply_stripe_invoice_discount_cents(inv.id, dc, cur, order.id)
+    return stripe.Invoice.retrieve(inv.id)
+
+
+def finalize_stripe_invoice_paid_out_of_band(invoice_id: str):
+    """
+    Finalize a draft invoice and mark it paid without charging the customer.
+    Use when payment was already collected (e.g. Checkout Session completed).
+    """
+    stripe.Invoice.finalize_invoice(invoice_id)
+    return stripe.Invoice.pay(invoice_id, paid_out_of_band=True)
+
+
+def build_stripe_invoice_and_notary_order(
+    order: Order,
+    event_obj,
+    client_user,
+    *,
+    finalize_and_mark_paid_out_of_band=True,
+    **stripe_invoice_kwargs,
+):
+    """
+    Completes fulfillment after Checkout / PaymentIntent success.
+
+    Reuses the **draft** invoice created when the session or PaymentIntent was
+    started (``order.invoice_id``). Applies session discount from ``event_obj``,
+    creates the NotaryDash order if missing, then finalizes the invoice and
+    marks it paid out-of-band (no second charge).
+
+    Returns:
+        (stripe.Invoice, notary_api_response). If NotaryDash creation fails,
+        returns (stripe_invoice, None) and leaves the invoice in **draft**.
+    """
+    _, notary_product_names = _ghl_invoice_items_and_notary_product_names(
+        order, event_obj
+    )
+    apply_event_discount = stripe_invoice_kwargs.pop("apply_event_discount", True)
+
+    stripe_invoice = None
+    if order.invoice_id:
+        try:
+            stripe_invoice = stripe.Invoice.retrieve(order.invoice_id)
+        except stripe.InvalidRequestError:
+            stripe_invoice = None
+        st = getattr(stripe_invoice, "status", None) if stripe_invoice else None
+        if stripe_invoice is None or st == "void":
+            stripe_invoice = create_stripe_invoice_for_order(
+                order,
+                event_obj,
+                client_user,
+                apply_event_discount=apply_event_discount,
+                **stripe_invoice_kwargs,
+            )
+            order.invoice_id = stripe_invoice.id
+            order.save(update_fields=["invoice_id"])
+        elif st == "draft":
+            cur = (getattr(stripe_invoice, "currency", None) or "usd").lower()
+            if apply_event_discount:
+                dc = discount_amount_cents_from_event_dict(event_obj)
+                apply_stripe_invoice_discount_cents(
+                    stripe_invoice.id, dc, cur, order.id
+                )
+            stripe_invoice = stripe.Invoice.retrieve(stripe_invoice.id)
+        # open / paid: use as-is (retry path)
+    else:
+        stripe_invoice = create_stripe_invoice_for_order(
+            order,
+            event_obj,
+            client_user,
+            apply_event_discount=apply_event_discount,
+            **stripe_invoice_kwargs,
         )
-        stripe.Invoice.modify(invoice.id, discounts=[{"coupon": coupon.id}])
-    if manual_capture:
-        stripe.Invoice.modify(
-            invoice.id,
-            payment_settings={
-                "payment_method_options": {
-                    "card": {"capture_method": "manual"},
-                },
-            },
+        order.invoice_id = stripe_invoice.id
+        order.save(update_fields=["invoice_id"])
+
+    if order.notary_order_id:
+        oid = str(order.notary_order_id)
+        notary_order = {"data": {"order_id": oid, "id": oid}}
+    else:
+        notary_order = build_notary_order(
+            order, notary_product_names, client_user, event_obj
         )
-    return stripe.Invoice.retrieve(invoice.id)
+
+    if not notary_order:
+        return stripe_invoice, None
+
+    if finalize_and_mark_paid_out_of_band:
+        inv = stripe.Invoice.retrieve(stripe_invoice.id)
+        st = getattr(inv, "status", None)
+        if getattr(order, "notary_order_id", None):
+            inv = stripe.Invoice.modify(
+                inv.id,
+                description=stripe_invoice_description_for_order(order),
+            )
+        if st == "draft":
+            stripe_invoice = finalize_stripe_invoice_paid_out_of_band(inv.id)
+            print(
+                f"Stripe invoice {stripe_invoice.id} finalized and marked paid "
+                f"(out_of_band, status={getattr(stripe_invoice, 'status', None)})"
+            )
+        elif st == "open":
+            stripe_invoice = stripe.Invoice.pay(inv.id, paid_out_of_band=True)
+            print(
+                f"Stripe invoice {stripe_invoice.id} marked paid out_of_band "
+                f"(status={getattr(stripe_invoice, 'status', None)})"
+            )
+
+    return stripe_invoice, notary_order
 
 
-def send_invoice(invoice_data):
-    oauth_obj = OAuthToken.objects.get(LocationId=invoice_data.get("altId"))
-    payload = {
-    "altId": invoice_data.get("altId"),
-    "altType": "location",
-    "userId": oauth_obj.userId,
-    "action": "send_manually",
-    "liveMode":invoice_data.get("liveMode", False),
-    }
-    response = InvoiceServices.send_invoice(invoice_data.get("altId"), invoice_data.get("_id"), payload)
-    # print(f"Send invoice response: {json.dumps(response, indent=4)}")
+# def send_invoice(invoice_data):
+#     oauth_obj = OAuthToken.objects.get(LocationId=invoice_data.get("altId"))
+#     payload = {
+#     "altId": invoice_data.get("altId"),
+#     "altType": "location",
+#     "userId": oauth_obj.userId,
+#     "action": "send_manually",
+#     "liveMode":invoice_data.get("liveMode", False),
+#     }
+#     response = InvoiceServices.send_invoice(invoice_data.get("altId"), invoice_data.get("_id"), payload)
+#     # print(f"Send invoice response: {json.dumps(response, indent=4)}")
 
-def record_payment(invoice_data):
-    oauth_obj = OAuthToken.objects.get(LocationId=invoice_data.get("altId"))
-    payload = {
-        "altId": invoice_data.get("altId"),
-        "altType": "location",
-        "mode": "cash",
-        # "card": {
-        #     "brand": "string",
-        #     "last4": "string"
-        # },
-        # "cheque": { "number": "129-129-129-912" },
-        "notes": "This was a Completed Payment from Order Form",
-        "amount":invoice_data.get("total"),
-        # "meta": {},
+# def record_payment(invoice_data):
+#     oauth_obj = OAuthToken.objects.get(LocationId=invoice_data.get("altId"))
+#     payload = {
+#         "altId": invoice_data.get("altId"),
+#         "altType": "location",
+#         "mode": "cash",
+#         # "card": {
+#         #     "brand": "string",
+#         #     "last4": "string"
+#         # },
+#         # "cheque": { "number": "129-129-129-912" },
+#         "notes": "This was a Completed Payment from Order Form",
+#         "amount":invoice_data.get("total"),
+#         # "meta": {},
 
-    }
-    response = InvoiceServices.record_payment(invoice_data.get("altId"), invoice_data.get("_id"), payload)
-    # print(f"Record payment response: {json.dumps(response, indent=4)}")
+#     }
+#     response = InvoiceServices.record_payment(invoice_data.get("altId"), invoice_data.get("_id"), payload)
+#     # print(f"Record payment response: {json.dumps(response, indent=4)}")
     
 
 

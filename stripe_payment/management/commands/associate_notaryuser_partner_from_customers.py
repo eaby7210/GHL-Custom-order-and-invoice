@@ -53,7 +53,7 @@ class Command(BaseCommand):
             ),
         )
 
-    def _sync_partner_from_typeform_mapping(self, dry_run, verbosity=1):
+    def _sync_partner_from_typeform_mapping(self, dry_run):
         qs = (
             NotaryUser.objects.filter(
                 typeform_partner_mapping__isnull=False,
@@ -87,18 +87,18 @@ class Command(BaseCommand):
 
             if not partner_id:
                 skipped_mapping_without_partner += 1
-                if verbosity >= 2:
-                    self.stdout.write(
-                        self.style.WARNING(
-                            f"  skip NotaryUser id={nu.id}: "
-                            f"mapping id={m.id} has no partner FK"
-                        )
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"  skip NotaryUser id={nu.id}: TypeformPartnerMapping "
+                        f"id={m.id} ({m.choice_label!r}) has no partner FK — "
+                        "set mapping.partner in admin (or Tolt sync), then re-run."
                     )
+                )
                 continue
 
             action = "[dry-run] would set" if dry_run else "set"
             self.stdout.write(
-                f"  {action} NotaryUser id={nu.id} partner_id={partner_id} "
+                f"  {action} NotaryUser id={nu.id} partner_id={partner_id!r} "
                 f"from TypeformPartnerMapping id={m.id}"
             )
             if not dry_run:
@@ -113,6 +113,13 @@ class Command(BaseCommand):
                 f"candidates={total_candidates}"
             )
         )
+        if skipped_mapping_without_partner and not updated:
+            self.stdout.write(
+                self.style.NOTICE(
+                    "No updates: every candidate’s mapping row lacks "
+                    "TypeformPartnerMapping.partner in the database."
+                )
+            )
         self.stdout.write("")
 
     def handle(self, *args, **options):
@@ -121,10 +128,7 @@ class Command(BaseCommand):
         skip_associate = options["skip_associate"]
 
         if options["sync_partner_from_mapping"]:
-            self._sync_partner_from_typeform_mapping(
-                dry_run,
-                verbosity=options.get("verbosity", 1),
-            )
+            self._sync_partner_from_typeform_mapping(dry_run)
 
         if not skip_associate:
             qs = NotaryUser.objects.all().order_by("id")

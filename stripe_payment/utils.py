@@ -292,13 +292,208 @@ def resolve_stripe_customer_id_for_order(
         return None
 
 
+def sync_order_service_type_for_line_items(order: Order) -> None:
+    """In-memory only; mirrors bundle / à la carte labeling for invoice line items."""
+    bundles = order.bundles.all()
+    services = order.a_la_carte_services.all()
+    if bundles.exists() and services.exists():
+        order.service_type = "mixed"
+    elif bundles.exists():
+        order.service_type = "bundled"
+    elif services.exists():
+        order.service_type = "a_la_carte"
+
+def retrieve_invoice(inv_id: str) -> stripe.Invoice:
+    """Retrieve a Stripe invoice by its ID."""
+    try:
+        return stripe.Invoice.retrieve(inv_id)
+    except stripe.InvalidRequestError:
+        return None
+
+def void_draft_stripe_invoice_if_any(invoice_id: Optional[str]) -> None:
+    """Void a draft invoice so a new checkout / intent can replace it."""
+    if not invoice_id:
+        return
+    try:
+        inv = stripe.Invoice.retrieve(invoice_id)
+        if getattr(inv, "status", None) == "draft":
+            stripe.Invoice.void_invoice(invoice_id)
+    except stripe.InvalidRequestError:
+        pass
+
+
+def apply_stripe_invoice_discount_cents(
+    invoice_id: str,
+    discount_cents: int,
+    currency: str,
+    order_pk,
+) -> None:
+    """Apply a fixed-amount-off coupon to a draft invoice (idempotent if discounts exist)."""
+    if discount_cents <= 0:
+        return
+    inv = stripe.Invoice.retrieve(invoice_id)
+    discounts = getattr(inv, "discounts", None) or []
+    if discounts:
+        return
+    cur = (currency or "usd").lower()
+    coupon = stripe.Coupon.create(
+        amount_off=int(discount_cents),
+        currency=cur,
+        duration="once",
+        name=f"Checkout discount (order {order_pk})",
+    )
+    stripe.Invoice.modify(invoice_id, discounts=[{"coupon": coupon.id}])
+
+
+def stripe_invoice_shipping_details_from_order(order: Order) -> Optional[dict]:
+    """
+    Map order service location (Google Places / autocomplete) to Stripe Invoice
+    ``shipping_details`` (PDF shipping block). Includes required ``name`` and
+    nested ``address`` with ISO country; optional ``phone``.
+    """
+    line1 = (getattr(order, "streetAddress", None) or "").strip()
+    line2 = (getattr(order, "unit", None) or "").strip()
+    city = (getattr(order, "city", None) or "").strip()
+    state = (getattr(order, "state", None) or "").strip()
+    postal = (str(getattr(order, "postal_code", None) or "")).strip()
+    if not (line1 or line2 or city or state or postal):
+        return None
+
+    fn = (getattr(order, "contact_first_name_sched", None) or "").strip()
+    ln = (getattr(order, "contact_last_name_sched", None) or "").strip()
+    name = f"{fn} {ln}".strip()
+    if not name:
+        fn = (getattr(order, "contact_first_name", None) or "").strip()
+        ln = (getattr(order, "contact_last_name", None) or "").strip()
+        name = f"{fn} {ln}".strip()
+    if not name:
+        name = (getattr(order, "company_name", None) or "").strip()
+    if not name:
+        name = f"Order #{order.id}"
+    name = name[:500]
+
+    phone_raw = getattr(order, "contact_phone_sched", None) or getattr(
+        order, "contact_phone", None
+    )
+    phone = str(phone_raw).strip()[:40] if phone_raw else ""
+
+    address: dict = {"country": "US"}
+    if line1:
+        address["line1"] = line1[:500]
+    if line2:
+        address["line2"] = line2[:500]
+    if city:
+        address["city"] = city[:200]
+    if state:
+        address["state"] = state[:200]
+    if postal:
+        address["postal_code"] = postal[:20]
+
+    shipping: dict = {"name": name, "address": address}
+    if phone:
+        shipping["phone"] = phone
+    return shipping
+
+
+def stripe_invoice_description_for_order(order: Order) -> str:
+    """Stripe invoice description; uses NotaryDash order_id when set, else DB pk."""
+    no_id = getattr(order, "notary_order_id", None)
+    if no_id is not None and str(no_id).strip():
+        num = str(no_id).strip()
+    else:
+        num = str(order.id)
+    return f"Order #{num} — {order.company_name or 'Notary services'}"
+
+
+# Draft invoices get this until NotaryDash order_id exists; views patch before finalize.
+STRIPE_INVOICE_DESCRIPTION_PENDING_NOTARY_ID = "Creating notary order ID…"
+
+
+def create_draft_stripe_invoice_for_order(
+    order: Order,
+    *,
+    stripe_customer_id=None,
+    currency: str = "usd",
+    description=None,
+    extra_metadata=None,
+):
+    """
+    Create a draft Stripe Invoice + InvoiceItems for ``order`` (no event-based discount).
+    Caller should persist ``invoice.id`` on the order for webhook-time finalize/pay.
+    """
+    sync_order_service_type_for_line_items(order)
+    customer_id = resolve_stripe_customer_id_for_order(order, stripe_customer_id)
+    if not customer_id:
+        raise ValueError(
+            "Stripe customer required: pass stripe_customer_id= or set "
+            "NotaryClientCompany.stripe_customer_id for order.company_id."
+        )
+    cur = (currency or "usd").lower()
+    footer = stripe_invoice_footer_for_order(order)
+    meta = {
+        "order_id": str(order.id),
+        "source": (
+            f"NotaryDash Order #{order.notary_order_id}"
+            if getattr(order, "notary_order_id", None)
+            else "checkout_pending"
+        ),
+    }
+    if getattr(order, "stripe_session_id", None):
+        meta["stripe_session_id"] = str(order.stripe_session_id)
+    if extra_metadata:
+        for k, v in extra_metadata.items():
+            if v is None:
+                continue
+            s = v if isinstance(v, str) else str(v)
+            meta[str(k)[:40]] = s[:500]
+
+    inv_params = {
+        "customer": customer_id,
+        "collection_method": "charge_automatically",
+        "auto_advance": False,
+        "currency": cur,
+        "description": (
+            description
+            if description is not None
+            else STRIPE_INVOICE_DESCRIPTION_PENDING_NOTARY_ID
+        ),
+        "footer": footer,
+        "metadata": meta,
+    }
+    shipping_details = stripe_invoice_shipping_details_from_order(order)
+    if shipping_details:
+        inv_params["shipping_details"] = shipping_details
+    invoice = stripe.Invoice.create(**inv_params)
+    for line in native_stripe_invoice_lines_for_order(order):
+        stripe.InvoiceItem.create(
+            customer=customer_id,
+            invoice=invoice.id,
+            currency=cur,
+            amount=line["amount"],
+            description=line["description"],
+            metadata=line.get("metadata") or {},
+        )
+    return stripe.Invoice.retrieve(invoice.id)
+
+
 def create_stripe_session(order: Order, domain, customer_id=None):
     """
     Creates a Stripe Checkout Session for the given order.
     `domain` should be something like 'https://yourfrontenddomain.com'
+
+    Also creates a **draft** Stripe Invoice for the order and stores its id on
+    ``order.invoice_id`` so the checkout webhook can finalize and mark it paid
+    out-of-band (payment is taken on the session PaymentIntent, not the invoice).
     """
     line_items = generate_order_line_items(order)
     total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
+
+    void_draft_stripe_invoice_if_any(getattr(order, "invoice_id", None))
+    draft_inv = create_draft_stripe_invoice_for_order(
+        order, stripe_customer_id=customer_id, currency="usd"
+    )
+    order.invoice_id = draft_inv.id
+    order.save(update_fields=["invoice_id"])
 
     coupon_data = None
     if order.coupon_code:
@@ -333,6 +528,7 @@ def create_stripe_session(order: Order, domain, customer_id=None):
                 "client_id": order.company_id,
                 "company_name": order.company_name,
                 "user_id": order.user_id,
+                "stripe_invoice_id": draft_inv.id,
             },
         }
 
@@ -551,6 +747,19 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
         
         final_metadata["line_items"] = items_str
         final_metadata["order_id"] = str(order.id) # Ensure order_id is present
+
+        void_draft_stripe_invoice_if_any(getattr(order, "invoice_id", None))
+        try:
+            draft_inv = create_draft_stripe_invoice_for_order(
+                order,
+                stripe_customer_id=customer_id,
+                currency=currency or "usd",
+            )
+            order.invoice_id = draft_inv.id
+            order.save(update_fields=["invoice_id"])
+            final_metadata["stripe_invoice_id"] = draft_inv.id
+        except ValueError as e:
+            print(f"⚠️ Could not create draft Stripe invoice for order {order.id}: {e}")
 
     try:
         intent = stripe.PaymentIntent.create(

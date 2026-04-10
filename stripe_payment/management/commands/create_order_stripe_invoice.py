@@ -97,13 +97,6 @@ class Command(BaseCommand):
                 "Do not apply amount_discount from the event payment object."
             ),
         )
-        parser.add_argument(
-            "--skip-manual-capture",
-            action="store_true",
-            help=(
-                "Do not set payment_settings card capture_method=manual."
-            ),
-        )
 
     def handle(self, *args, **options):
         stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -165,7 +158,6 @@ class Command(BaseCommand):
             stripe_customer_id=options["stripe_customer_id"],
             currency=options["currency"],
             apply_event_discount=not options["skip_event_discount"],
-            manual_capture=not options["skip_manual_capture"],
         )
 
         msg = (
