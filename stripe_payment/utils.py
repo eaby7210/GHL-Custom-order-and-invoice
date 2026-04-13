@@ -13,7 +13,7 @@ from stripe_payment.models import (
 )
 import json
 import re
-from typing import Optional
+from typing import List, Optional
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -345,11 +345,89 @@ def apply_stripe_invoice_discount_cents(
     stripe.Invoice.modify(invoice_id, discounts=[{"coupon": coupon.id}])
 
 
-def stripe_invoice_shipping_details_from_order(order: Order) -> Optional[dict]:
+# Stripe invoice custom field values are capped at 140 characters; max 4 fields per invoice.
+_STRIPE_INVOICE_CUSTOM_FIELD_VALUE_MAX = 140
+_STRIPE_INVOICE_CUSTOM_FIELD_NAME_MAX = 40
+_STRIPE_INVOICE_CUSTOM_FIELDS_MAX = 4
+
+
+def _normalize_us_phone_national_digits(raw) -> Optional[str]:
     """
-    Map order service location (Google Places / autocomplete) to Stripe Invoice
-    ``shipping_details`` (PDF shipping block). Includes required ``name`` and
-    nested ``address`` with ISO country; optional ``phone``.
+    Return 10-digit national digits if ``raw`` looks like a US NANP number
+    (optional country code 1); otherwise None.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    digits = re.sub(r"\D", "", s)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) != 10 or not digits.isdigit():
+        return None
+    # NANP NXX-NXX-XXXX: first digit of area code and exchange cannot be 0 or 1.
+    if digits[0] in "01" or digits[3] in "01":
+        return None
+    return digits
+
+
+def format_us_phone_for_invoice(raw) -> str:
+    """
+    If ``raw`` is a valid US number, return ``+1-XXX-XXX-XXXX``; otherwise the
+    trimmed original string (empty when missing).
+    """
+    d = _normalize_us_phone_national_digits(raw)
+    if d:
+        return f"+1-{d[0:3]}-{d[3:6]}-{d[6:10]}"
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _stripe_invoice_custom_field_chunks(
+    base_name: str, value: str
+) -> List[dict[str, str]]:
+    """Split a long value into 140-char Stripe custom field values; add (cont.) fields as needed."""
+    if not value:
+        return []
+    out: List[dict[str, str]] = []
+    rest = value
+    idx = 0
+    m = _STRIPE_INVOICE_CUSTOM_FIELD_VALUE_MAX
+    while rest:
+        if len(rest) <= m:
+            label = base_name if idx == 0 else f"{base_name} (cont.)"
+            out.append(
+                {
+                    "name": label[:_STRIPE_INVOICE_CUSTOM_FIELD_NAME_MAX],
+                    "value": rest,
+                }
+            )
+            break
+        label = base_name if idx == 0 else f"{base_name} (cont.)"
+        out.append(
+            {
+                "name": label[:_STRIPE_INVOICE_CUSTOM_FIELD_NAME_MAX],
+                "value": rest[:m],
+            }
+        )
+        rest = rest[m:]
+        idx += 1
+    return out
+
+
+def stripe_invoice_address_custom_field_from_order(
+    order: Order,
+) -> Optional[List[dict[str, str]]]:
+    """
+    Stripe Invoice ``custom_fields`` for service location and contact.
+
+    If the full joined address exceeds 140 characters but street (line1 + unit)
+    alone does not, splits into a main street field and a second field for
+    city, state, and postal. Any value still over the limit is split into
+    additional ``(cont.)`` fields. At most four custom fields total (Stripe cap);
+    Name and Phone are listed first, then address chunks.
     """
     line1 = (getattr(order, "streetAddress", None) or "").strip()
     line2 = (getattr(order, "unit", None) or "").strip()
@@ -370,29 +448,59 @@ def stripe_invoice_shipping_details_from_order(order: Order) -> Optional[dict]:
         name = (getattr(order, "company_name", None) or "").strip()
     if not name:
         name = f"Order #{order.id}"
-    name = name[:500]
 
     phone_raw = getattr(order, "contact_phone_sched", None) or getattr(
         order, "contact_phone", None
     )
-    phone = str(phone_raw).strip()[:40] if phone_raw else ""
+    phone = format_us_phone_for_invoice(phone_raw)
 
-    address: dict = {"country": "US"}
+    city_line = ", ".join(
+        p
+        for p in (city, f"{state} {postal}".strip() if (state or postal) else "")
+        if p
+    )
+    addr_parts: list[str] = []
     if line1:
-        address["line1"] = line1[:500]
+        addr_parts.append(line1)
     if line2:
-        address["line2"] = line2[:500]
-    if city:
-        address["city"] = city[:200]
-    if state:
-        address["state"] = state[:200]
-    if postal:
-        address["postal_code"] = postal[:20]
+        addr_parts.append(line2)
+    if city_line:
+        addr_parts.append(city_line)
+    address_line = ", ".join(addr_parts)
+    street_only = ", ".join(p for p in (line1, line2) if p)
 
-    shipping: dict = {"name": name, "address": address}
+    mx = _STRIPE_INVOICE_CUSTOM_FIELD_VALUE_MAX
+    address_specs: list[tuple[str, str]] = []
+
+    if len(address_line) <= mx:
+        address_specs.append(("Service address", address_line))
+    elif len(address_line) > mx and len(street_only) <= mx and city_line:
+        address_specs.append(("Service address", street_only))
+        address_specs.append(("City, State, ZIP", city_line))
+    else:
+        if line1:
+            address_specs.append(("Address line 1", line1))
+        if line2:
+            address_specs.append(("Address line 2", line2))
+        if city_line:
+            address_specs.append(("City, State, ZIP", city_line))
+
+    address_fields: List[dict[str, str]] = []
+    for aname, aval in address_specs:
+        address_fields.extend(_stripe_invoice_custom_field_chunks(aname, aval))
+
+    result: List[dict[str, str]] = []
+    if name:
+        result.extend(_stripe_invoice_custom_field_chunks("Name", name))
     if phone:
-        shipping["phone"] = phone
-    return shipping
+        result.extend(_stripe_invoice_custom_field_chunks("Phone", phone))
+    result.extend(address_fields)
+
+    if len(result) > _STRIPE_INVOICE_CUSTOM_FIELDS_MAX:
+        result = result[: _STRIPE_INVOICE_CUSTOM_FIELDS_MAX]
+
+    return result
+
 
 
 def stripe_invoice_description_for_order(order: Order) -> str:
@@ -449,7 +557,8 @@ def create_draft_stripe_invoice_for_order(
 
     inv_params = {
         "customer": customer_id,
-        "collection_method": "charge_automatically",
+        "collection_method": "send_invoice",
+        "days_until_due": 1,
         "auto_advance": False,
         "currency": cur,
         "description": (
@@ -460,9 +569,9 @@ def create_draft_stripe_invoice_for_order(
         "footer": footer,
         "metadata": meta,
     }
-    shipping_details = stripe_invoice_shipping_details_from_order(order)
-    if shipping_details:
-        inv_params["shipping_details"] = shipping_details
+    address_field = stripe_invoice_address_custom_field_from_order(order)
+    if address_field:
+        inv_params["custom_fields"] = address_field
     invoice = stripe.Invoice.create(**inv_params)
     for line in native_stripe_invoice_lines_for_order(order):
         stripe.InvoiceItem.create(
