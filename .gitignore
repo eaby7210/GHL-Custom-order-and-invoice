@@ -1,5 +1,6 @@
 .env
 *.json
+*.diff
 db.sqlite3
 *sqlite3
 media
