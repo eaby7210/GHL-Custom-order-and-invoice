@@ -569,6 +569,13 @@ def create_draft_stripe_invoice_for_order(
         "footer": footer,
         "metadata": meta,
     }
+    
+    # Natively inject promo-code discounts into the Stripe Invoice!
+    if getattr(order, "coupon_code", None):
+        coupon = get_coupon_by_promo_code(order.coupon_code.strip())
+        if coupon:
+            inv_params["discounts"] = [{"coupon": coupon.id}]
+
     address_field = stripe_invoice_address_custom_field_from_order(order)
     if address_field:
         inv_params["custom_fields"] = address_field
@@ -587,49 +594,46 @@ def create_draft_stripe_invoice_for_order(
 
 def create_stripe_session(order: Order, domain, customer_id=None):
     """
-    Creates a Stripe Checkout Session for the given order.
-    `domain` should be something like 'https://yourfrontenddomain.com'
-
-    Also creates a **draft** Stripe Invoice for the order and stores its id on
-    ``order.invoice_id`` so the checkout webhook can finalize and mark it paid
-    out-of-band (payment is taken on the session PaymentIntent, not the invoice).
+    Creates a Stripe Checkout Session for the given order using native invoice generation
+    to eliminate duplicate transaction rows, auto-capturing funds upfront and relying on 
+    an automated refund webhook system if downstream fulfillment fails.
     """
     line_items = generate_order_line_items(order)
     total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
-
-    void_draft_stripe_invoice_if_any(getattr(order, "invoice_id", None))
-    draft_inv = create_draft_stripe_invoice_for_order(
-        order, stripe_customer_id=customer_id, currency="usd"
-    )
-    order.invoice_id = draft_inv.id
-    order.save(update_fields=["invoice_id"])
 
     coupon_data = None
     if order.coupon_code:
         coupon = get_coupon_by_promo_code(order.coupon_code.strip())
         if coupon:
             print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
-            # Create discount object correctly
-            # Create discount object correctly
-            coupon_data = {
-                # Use "promotion_code" if it's a customer-facing code
-                # Or use "coupon" if it's a direct coupon ID
-                "coupon": coupon.id
-            }
+            coupon_data = {"coupon": coupon.id}
     
+    invoice_data = {
+        "description": stripe_invoice_description_for_order(order),
+        "footer": stripe_invoice_footer_for_order(order),
+        "metadata": {"order_id": str(order.id)}
+    }
+    
+    address_field = stripe_invoice_address_custom_field_from_order(order)
+    if address_field:
+        invoice_data["custom_fields"] = address_field
+
     session_params = {
         "payment_method_types": ["card", "link"],
         "mode": "payment",
         "line_items": line_items,
         "success_url": f"{domain}?status=success&session_id={{CHECKOUT_SESSION_ID}}&client_id={order.user_id}",
         "cancel_url": f"{domain}?client_id={order.user_id}&company_id={order.company_id}&status=cancel",
-        
+        "invoice_creation": {
+            "enabled": True,
+            "invoice_data": invoice_data
+        },
         "payment_intent_data": {
-            "capture_method": "manual",
+            "capture_method": "automatic",
             "setup_future_usage": "off_session",
             "metadata": {
-                "_id": str(order.id), # type: ignore
-                "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else ""  ,
+                "_id": str(order.id),
+                "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else "",
                 "contact_phone": order.contact_phone_sched or "",
                 "contact_email": order.contact_email_sched or "",
                 "preferred_datetime": order.preferred_datetime.isoformat() if order.preferred_datetime else "",
@@ -637,10 +641,8 @@ def create_stripe_session(order: Order, domain, customer_id=None):
                 "client_id": order.company_id,
                 "company_name": order.company_name,
                 "user_id": order.user_id,
-                "stripe_invoice_id": draft_inv.id,
             },
         }
-
     }
     if coupon_data:
         print(f"applying coupon")
@@ -835,8 +837,9 @@ def create_stripe_setup_intent(customer_id):
 
 def create_payment_intent(amount, currency, customer_id, payment_method_id, metadata=None, order=None, frontend_domain=None):
     """
-    Creates and confirms a PaymentIntent for a specific payment method (saved card).
-    If order is provided, generates line items summary for metadata.
+    Creates and confirms a PaymentIntent for a specific payment method (saved card)
+    by routing directly through a Stripe Invoice to avoid transaction duplication.
+    It builds the downstream NotaryDash order beforehand if an order is provided.
     """
     final_metadata = metadata or {}
     
@@ -858,6 +861,8 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
         final_metadata["order_id"] = str(order.id) # Ensure order_id is present
 
         void_draft_stripe_invoice_if_any(getattr(order, "invoice_id", None))
+        
+        # 1. Draft the Invoice
         try:
             draft_inv = create_draft_stripe_invoice_for_order(
                 order,
@@ -869,18 +874,62 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
             final_metadata["stripe_invoice_id"] = draft_inv.id
         except ValueError as e:
             print(f"⚠️ Could not create draft Stripe invoice for order {order.id}: {e}")
+            return None, None
+
+        # 2. Pre-build NotaryDash order BEFORE capturing funds
+        try:
+            from .views import build_notary_order, _ghl_invoice_items_and_notary_product_names
+            from customauth.models import NotaryUser
+            
+            client_user_obj = NotaryUser.objects.filter(id=order.user_id).first()
+            _, notary_product_names = _ghl_invoice_items_and_notary_product_names(order, {})
+            
+            notary_order = build_notary_order(order, notary_product_names, client_user_obj, {})
+            
+            if not notary_order:
+                raise Exception("Failed to generate Notary Order. Aborting payment.")
+                
+            # Update draft invoice with Notary Order ID since we now have it
+            if order.notary_order_id:
+                stripe.Invoice.modify(
+                    draft_inv.id,
+                    description=stripe_invoice_description_for_order(order),
+                )
+                
+        except Exception as e:
+            print(f"❌ Error compiling downstream Notary order: {e}")
+            # Ensure invoice stays draft / voided
+            void_draft_stripe_invoice_if_any(draft_inv.id)
+            order.invoice_id = None
+            order.save(update_fields=["invoice_id"])
+            raise e
 
     try:
-        intent = stripe.PaymentIntent.create(
-            amount=amount,
-            currency=currency,
-            customer=customer_id,
-            payment_method=payment_method_id,
-            off_session=True,
-            confirm=True,
-            capture_method='manual',
-            metadata=final_metadata
-        )
+        # Instead of raw PaymentIntent create, let the invoice natively 
+        # auto-generate the PaymentIntent & execute the charge
+        if order and order.invoice_id:
+            # Native Auto-generation & capture:
+            invoice = stripe.Invoice.pay(
+                order.invoice_id, 
+                payment_method=payment_method_id, 
+                off_session=True
+            )
+            intent = stripe.PaymentIntent.retrieve(invoice.payment_intent)
+            # Apply metadata
+            stripe.PaymentIntent.modify(intent.id, metadata=final_metadata)
+            
+        else:
+            # Fallback for generic payments entirely devoid of generic Orders
+            intent = stripe.PaymentIntent.create(
+                amount=amount,
+                currency=currency,
+                customer=customer_id,
+                payment_method=payment_method_id,
+                off_session=True,
+                confirm=True,
+                capture_method='automatic',
+                metadata=final_metadata
+            )
         
         # Determine Redirect URL
         redirect_url = None
@@ -890,8 +939,13 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
 
         return intent, redirect_url
 
-    except stripe.APIConnectionError as e:
-        print(f"❌ Stripe Timeout creating PaymentIntent: {e}")
+    except stripe.error.CardError as e:
+        print(f"❌ Stripe CardError / 3DS requirement triggered: {e}")
+        # MUST re-raise CardError to ensure FormSubmissionAPIView detects it 
+        # and issues a 400 response for 3DS action requirement
+        raise e
+    except stripe.error.APIConnectionError as e:
+        print(f"❌ Stripe Timeout creating PaymentIntent via invoice: {e}")
         return None, None
     except Exception as e:
         print(f"❌ Error creating PaymentIntent: {e}")
