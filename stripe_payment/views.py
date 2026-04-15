@@ -1358,11 +1358,11 @@ def process_order(event,order_obj):
         contact_email = client_user.get("email")
         print(f"Contact phone: {contact_phone}, Contact email: {contact_email}")
         
-        print("Getting OAuth token...")
+        # print("")
         # token_obj = OAuthServices.get_valid_access_token_obj()
         # print(f"Token location ID: {token_obj.LocationId if token_obj else 'None'}")
         
-        print("Searching for existing contacts...")
+        # print("Searching for existing contacts...")
         # search_response = ContactServices.search_contacts(token_obj.LocationId, query={
         #     "locationId": "n7iGMwfy1T5lZZacxygj",
         #     "page": 1,

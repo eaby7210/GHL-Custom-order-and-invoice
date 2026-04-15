@@ -10,6 +10,7 @@ from stripe_payment.models import (
     Order,
     ALaCarteService,
     NotaryClientCompany,
+    NotaryUser,
 )
 import json
 import re
@@ -879,12 +880,27 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
         # 2. Pre-build NotaryDash order BEFORE capturing funds
         try:
             from .views import build_notary_order, _ghl_invoice_items_and_notary_product_names
-            from customauth.models import NotaryUser
-            
-            client_user_obj = NotaryUser.objects.filter(id=order.user_id).first()
+
+            client_user: dict = {}
+            try:
+                uid = int(str(order.user_id)) if order.user_id not in (None, "") else None
+            except (TypeError, ValueError):
+                uid = None
+            if uid is not None:
+                nu = NotaryUser.objects.filter(pk=uid).first()
+                if nu:
+                    client_user = {
+                        "id": nu.pk,
+                        "email": nu.email or "",
+                        "name": nu.name or "",
+                        "first_name": nu.first_name or "",
+                        "last_name": nu.last_name or "",
+                        "attr": nu.attr if isinstance(nu.attr, dict) else {},
+                    }
+
             _, notary_product_names = _ghl_invoice_items_and_notary_product_names(order, {})
-            
-            notary_order = build_notary_order(order, notary_product_names, client_user_obj, {})
+
+            notary_order = build_notary_order(order, notary_product_names, client_user, {})
             
             if not notary_order:
                 raise Exception("Failed to generate Notary Order. Aborting payment.")
