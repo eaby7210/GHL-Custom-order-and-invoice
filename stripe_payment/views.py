@@ -315,8 +315,7 @@ class FormSubmissionAPIView(APIView):
                     intent_status = intent.status
                     client_secret = intent.client_secret
                     if intent.status == "succeeded":
-                        # We might want to mark order as paid or similar if we track that
-                        pass
+                        order.processing_status = "completed"
                     order.save()
                 else:
                     # Intent creation failed (likely CardError), but we have a redirect_url (failure page)
@@ -1331,9 +1330,19 @@ def process_order(event,order_obj):
         company_id = order_obj.company_id
         user_id = order_obj.user_id
 
-        # --- IDEMPOTENCY CHECK ---
-        # Draft invoice is created at Checkout / PI creation; invoice_id is set early.
-        # Skip only when Notary order exists and the Stripe invoice is already paid.
+       
+        if obj.get("object") == "payment_intent":
+            md = obj.get("metadata") or {}
+            if md.get("stripe_payment_flow") == "invoice_pay_saved_card":
+                order_obj.refresh_from_db()
+                if order_obj.processing_status == "completed":
+                    print(
+                        f"✅ Order {order_obj.id}: invoice_pay_saved_card already completed; "
+                        "skipping process_order."
+                    )
+                    return True
+
+       
         if order_obj.notary_order_id and order_obj.invoice_id:
             try:
                 inv_chk = stripe.Invoice.retrieve(order_obj.invoice_id)

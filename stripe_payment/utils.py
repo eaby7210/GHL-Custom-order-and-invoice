@@ -834,7 +834,51 @@ def create_stripe_setup_intent(customer_id):
         return None
 
 
+def payment_intent_from_paid_invoice(invoice):
+    """
+    Return the PaymentIntent for a paid invoice.
 
+    Stripe Basil (2025-03-31+) removed Invoice.payment_intent. Use
+    ``invoice.payments.data[].payment.payment_intent`` (expand that path on
+    retrieve); ``id`` and ``status`` live on that PaymentIntent object.
+    Older API versions may still set invoice.payment_intent.
+    """
+    legacy = getattr(invoice, "payment_intent", None)
+    if legacy:
+        if isinstance(legacy, str):
+            return stripe.PaymentIntent.retrieve(legacy)
+        return legacy
+
+    payments = getattr(invoice, "payments", None)
+    rows = getattr(payments, "data", None) if payments else None
+    if not rows:
+        return None
+
+    resolved = []
+    for inv_payment in rows:
+        payment = getattr(inv_payment, "payment", None)
+        if not payment or getattr(payment, "type", None) != "payment_intent":
+            continue
+        pi_ref = getattr(payment, "payment_intent", None)
+        if not pi_ref:
+            continue
+        pi_obj = (
+            stripe.PaymentIntent.retrieve(pi_ref)
+            if isinstance(pi_ref, str)
+            else pi_ref
+        )
+        if getattr(pi_obj, "status", None) == "succeeded":
+            return pi_obj
+        resolved.append((inv_payment, pi_obj))
+
+    if not resolved:
+        return None
+
+    for inv_payment, pi_obj in resolved:
+        if getattr(inv_payment, "status", None) == "paid":
+            return pi_obj
+
+    return resolved[-1][1]
 
 def create_payment_intent(amount, currency, customer_id, payment_method_id, metadata=None, order=None, frontend_domain=None):
     """
@@ -860,6 +904,7 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
         
         final_metadata["line_items"] = items_str
         final_metadata["order_id"] = str(order.id) # Ensure order_id is present
+        final_metadata["stripe_payment_flow"] = "invoice_pay_saved_card"
 
         void_draft_stripe_invoice_if_any(getattr(order, "invoice_id", None))
         
@@ -925,12 +970,20 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
         # auto-generate the PaymentIntent & execute the charge
         if order and order.invoice_id:
             # Native Auto-generation & capture:
-            invoice = stripe.Invoice.pay(
-                order.invoice_id, 
-                payment_method=payment_method_id, 
-                off_session=True
+            stripe.Invoice.pay(
+                order.invoice_id,
+                payment_method=payment_method_id,
+                off_session=True,
             )
-            intent = stripe.PaymentIntent.retrieve(invoice.payment_intent)
+            invoice = stripe.Invoice.retrieve(
+                order.invoice_id,
+                expand=["payments.data.payment.payment_intent"],
+            )
+            intent = payment_intent_from_paid_invoice(invoice)
+            if not intent:
+                raise ValueError(
+                    "Paid invoice has no PaymentIntent (check Basil invoice.payments)"
+                )
             # Apply metadata
             stripe.PaymentIntent.modify(intent.id, metadata=final_metadata)
             
