@@ -24,6 +24,52 @@ from django.core.cache import cache
 from .services import GoogleService
 
 
+def ensure_notary_client_company_local(company_id):
+    """
+    Ensure a NotaryClientCompany row exists for this NotaryDash client id.
+    If missing locally, GET /api/v2/clients/{id} and upsert (same shape as create flow).
+    Returns (NotaryClientCompany | None, error_message | None).
+    """
+    if company_id is None:
+        return None, "Missing company id for NotaryClientCompany"
+    try:
+        pk = int(company_id)
+    except (TypeError, ValueError):
+        return None, "Invalid company id for NotaryClientCompany"
+
+    existing = NotaryClientCompany.objects.filter(id=pk).first()
+    if existing:
+        return existing, None
+
+    client_response = NotaryDashServices.get_client(str(pk))
+    if not client_response:
+        return None, "Failed to fetch client from NotaryDash for last_company_id"
+
+    client_data = client_response.get("data") or {}
+    remote_id = client_data.get("id")
+    if not remote_id:
+        return None, "NotaryDash client response missing id"
+
+    client_obj, _ = NotaryClientCompany.objects.update_or_create(
+        id=remote_id,
+        defaults={
+            "owner_id": client_data.get("owner_id"),
+            "parent_company_id": client_data.get("parent_company_id"),
+            "type": client_data.get("type"),
+            "company_name": client_data.get("company_name"),
+            "parent_company_name": client_data.get("parent_company_name"),
+            "attr": client_data.get("attr", {}),
+            "address": client_data.get("address") or {},
+            "deleted_at": client_data.get("deleted_at"),
+            "created_at": client_data.get("created_at"),
+            "updated_at": client_data.get("updated_at"),
+            "active": client_data.get("active", True),
+        },
+    )
+    print(f"✅ Synced NotaryClientCompany from API: {client_obj} (ID: {client_obj.id})")
+    return client_obj, None
+
+
 class LatestTermsOfConditionsView(APIView):
     """
     Returns the latest Terms of Conditions (by updated_at).
@@ -252,6 +298,13 @@ class NotaryCreationView(APIView):
         company_id = last_company_id if last_company_id else client_id
 
         if user_id:
+            _, sync_err = ensure_notary_client_company_local(company_id)
+            if sync_err:
+                return Response(
+                    {"message": sync_err},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
             # Check for existing users to determine admin status
             is_first_user = not NotaryUser.objects.filter(last_company_id=company_id).exists()
             
@@ -265,7 +318,7 @@ class NotaryCreationView(APIView):
                 "attr": user_data.get("attr", {}),
                 "last_login_at": user_data.get("last_login_at"),
                 "last_ip": user_data.get("last_ip"),
-                "last_company_id": user_data.get("last_company_id", company_id),
+                "last_company_id": company_id,
                 "email_unverified": user_data.get("email_unverified"),
                 "disabled": user_data.get("disabled"),
                 "deleted_at": user_data.get("deleted_at"),

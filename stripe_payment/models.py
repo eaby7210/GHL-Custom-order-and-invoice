@@ -612,7 +612,7 @@ class NotaryClientCompany(models.Model):
     owner_id = models.BigIntegerField()
     parent_company_id = models.BigIntegerField()
     
-    type = models.CharField(max_length=50)  # e.g., 'client'
+    type = models.CharField(max_length=50, default='client')  # e.g., 'client'
     company_name = models.CharField(max_length=255)
     parent_company_name = models.CharField(max_length=255, null=True, blank=True)
 
