@@ -1176,16 +1176,21 @@ def handle_payment_intent_requires_action(event):
             print("ERROR: No order found with this payment intent ID")
             return None
         
-        # Idempotency: Atomic Lock
-        # Try to update status from pending to processing. 
-        # If rows updated == 0, it means it's not pending (already processing/completed/failed)
-        rows_updated = Order.objects.filter(id=order_obj.id, processing_status="pending").update(processing_status="processing")
-        
-        if rows_updated == 0 and not order_obj.processing_status == "failed": # Allow retry if failed? Or just check status
-             # Refresh from DB to see actual status
-             order_obj.refresh_from_db()
-             print(f"✅ Order {order_obj.id} cannot be locked (Status: {order_obj.processing_status}). Skipping PI requires_action.")
-             return None
+        # Idempotency: atomic lock — only one worker may enter process_order.
+        # Include failed so a retry can re-acquire the lock; completed/processing
+        # stay excluded (0 rows updated → skip).
+        rows_updated = Order.objects.filter(
+            id=order_obj.id,
+            processing_status__in=["pending", "failed"],
+        ).update(processing_status="processing")
+
+        if rows_updated == 0:
+            order_obj.refresh_from_db()
+            print(
+                f"✅ Order {order_obj.id} cannot be locked "
+                f"(status={order_obj.processing_status}). Skipping PI requires_action."
+            )
+            return None
 
         # Lock acquired, proceed
         print(f"🔒 Order {order_obj.id} locked for processing.")
@@ -1258,14 +1263,21 @@ def handle_checkout_session_completed(event):
             order_obj.invoice_id = native_invoice_id
             order_obj.save(update_fields=["invoice_id"])
             
-        # Idempotency: Atomic Lock
-        rows_updated = Order.objects.filter(id=order_obj.id, processing_status="pending").update(processing_status="processing")
-        
-        if rows_updated == 0 and not order_obj.processing_status == "failed":
-             # Refresh from DB to see actual status
-             order_obj.refresh_from_db()
-             print(f"✅ Order {order_obj.id} cannot be locked (Status: {order_obj.processing_status}). Skipping Session Completed.")
-             pass
+        # Idempotency: atomic lock — only one checkout completion may run process_order.
+        # Same as handle_payment_intent_requires_action: pending or failed → processing
+        # in one UPDATE so concurrent retries cannot double-create Notary orders.
+        rows_updated = Order.objects.filter(
+            id=order_obj.id,
+            processing_status__in=["pending", "failed"],
+        ).update(processing_status="processing")
+
+        if rows_updated == 0:
+            order_obj.refresh_from_db()
+            print(
+                f"✅ Order {order_obj.id} cannot be locked "
+                f"(status={order_obj.processing_status}). Skipping Session Completed."
+            )
+            pass
         else:
             # Lock acquired
             print(f"🔒 Order {order_obj.id} locked for processing.")
