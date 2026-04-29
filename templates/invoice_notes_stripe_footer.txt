@@ -43,3 +43,9 @@ Special instructions:
 Order status updates (participants):{% for email in order_status_emails_list %}{% if email %}
 • {{ email }}{% endif %}{% endfor %}
 {% endif %}
+
+All orders are subject to InvestorBootz's Terms of Service, service scope, cancellation/re-trip policy, and refund/adjustment policy. Completed services are generally non-refundable once dispatched, performed, or delivered.
+
+Please report any deliverable concerns within 48 hours to support@investorbootz.com or 800-940-8314.
+
+For billing questions, contact accounting@investorbootz.com.

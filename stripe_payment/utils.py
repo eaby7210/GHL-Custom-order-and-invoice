@@ -24,11 +24,13 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 # stripe.max_network_retries = 10
 try:
     from stripe._http_client import RequestsClient
-    httpClient = RequestsClient(timeout=60) 
+
+    httpClient = RequestsClient(timeout=60)
     stripe.default_http_client = httpClient
 except Exception as e:
     print(f"⚠️ Could not set custom Stripe timeout: {e}")
 # ================================
+
 
 def create_stripe_customer(company_name, email=None, metadata=None):
     """
@@ -41,7 +43,7 @@ def create_stripe_customer(company_name, email=None, metadata=None):
         }
         if email:
             customer_data["email"] = email
-        
+
         if metadata:
             customer_data["metadata"] = metadata
 
@@ -52,9 +54,9 @@ def create_stripe_customer(company_name, email=None, metadata=None):
         print(f"❌ Stripe Timeout creating Customer: {e}")
         return None
     except Exception as e:
-
         print(f"❌ Error creating Stripe Customer: {e}")
         return None
+
 
 def apply_coupon_to_customer(customer_id, coupon_id):
     """
@@ -62,10 +64,7 @@ def apply_coupon_to_customer(customer_id, coupon_id):
     This counts against the coupon's redemption limit.
     """
     try:
-        stripe.Customer.modify(
-            customer_id,
-            coupon=coupon_id
-        )
+        stripe.Customer.modify(customer_id, coupon=coupon_id)
         print(f"✅ Applied coupon {coupon_id} to customer {customer_id}")
         return True
     except stripe.APIConnectionError as e:
@@ -74,6 +73,7 @@ def apply_coupon_to_customer(customer_id, coupon_id):
     except Exception as e:
         print(f"❌ Error applying coupon to customer: {e}")
         return False
+
 
 def generate_order_line_items(order: Order):
     """
@@ -84,24 +84,29 @@ def generate_order_line_items(order: Order):
     bundles = order.bundles.all()
     if bundles.exists():
         for bundle in bundles:
-            line_items.append({
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {
-                        "name": bundle.name,
-                        "description": f"Bundle - {bundle.description}" if bundle.description else f"Bundle - {bundle.name}",
+            line_items.append(
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {
+                            "name": bundle.name,
+                            "description": f"Bundle - {bundle.description}"
+                            if bundle.description
+                            else f"Bundle - {bundle.name}",
+                        },
+                        "unit_amount": int(float(bundle.price or 0) * 100),
                     },
-                    "unit_amount": int(float(bundle.price or 0) * 100),
-                },
-                "quantity": 1,
-            })
-
+                    "quantity": 1,
+                }
+            )
 
     services = order.a_la_carte_services.all()
     for service in services:
         for item in service.items.all():
             # Gather options
-            selected_options = item.options.filter(value=True).values_list("label", flat=True)
+            selected_options = item.options.filter(value=True).values_list(
+                "label", flat=True
+            )
 
             # Gather submenu info
             submenu_parts = []
@@ -120,55 +125,62 @@ def generate_order_line_items(order: Order):
             # Price logic
             price_value = item.price or item.base_price or 0
 
-            line_items.append({
+            line_items.append(
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {
+                            "name": product_name,
+                            "description": service.title,
+                            "metadata": {
+                                "service_id": service.service_id,
+                                "item_id": item.item_id,
+                                "options": ", ".join(selected_options),
+                                "submenu": ", ".join(
+                                    f"{sub.label} ({sub.value})"
+                                    for sub in item.submenu_items.all()
+                                    if sub.value > 0
+                                ),
+                            },
+                        },
+                        "unit_amount": int(float(price_value) * 100),
+                    },
+                    "quantity": 1,
+                }
+            )
+
+    if not line_items:
+        line_items.append(
+            {
                 "price_data": {
                     "currency": "usd",
                     "product_data": {
-                        "name": product_name,
-                        "description": service.title,
-                        "metadata": {
-                            "service_id": service.service_id,
-                            "item_id": item.item_id,
-                            "options": ", ".join(selected_options),
-                            "submenu": ", ".join(
-                                f"{sub.label} ({sub.value})" for sub in item.submenu_items.all() if sub.value > 0
-                            ),
-                        },
+                        "name": "Custom Order",
+                        "description": f"{order.service_type.title()} Service",
                     },
-                    "unit_amount": int(float(price_value) * 100),
+                    "unit_amount": int(float(order.total_price or 0) * 100),
                 },
                 "quantity": 1,
-            })
+            }
+        )
 
-
-    if not line_items:
-        line_items.append({
-            "price_data": {
-                "currency": "usd",
-                "product_data": {
-                    "name": "Custom Order",
-                    "description": f"{order.service_type.title()} Service",
-                },
-                "unit_amount": int(float(order.total_price or 0) * 100),
-            },
-            "quantity": 1,
-        })
-    
     # --- Add Order Protection  ---
-    if order.order_protection and int(Decimal(order.order_protection_price))>0:
+    if order.order_protection and int(Decimal(order.order_protection_price)) > 0:
         print(order.order_protection_price, type(order.order_protection_price))
-        line_items.append({
-            "price_data": {
-                "currency": "usd",
-                "product_data": {
-                    "name": "Order Protection",
-                    "description": "Optional order protection",
+        line_items.append(
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": "Order Protection",
+                        "description": "Optional order protection",
+                    },
+                    "unit_amount": int(Decimal(order.order_protection_price) * 100),
                 },
-                "unit_amount": int(Decimal(order.order_protection_price)*100),
-            },
-            "quantity": 1,
-        })
-        
+                "quantity": 1,
+            }
+        )
+
     return line_items
 
 
@@ -304,12 +316,14 @@ def sync_order_service_type_for_line_items(order: Order) -> None:
     elif services.exists():
         order.service_type = "a_la_carte"
 
+
 def retrieve_invoice(inv_id: str) -> stripe.Invoice:
     """Retrieve a Stripe invoice by its ID."""
     try:
         return stripe.Invoice.retrieve(inv_id)
     except stripe.InvalidRequestError:
         return None
+
 
 def void_draft_stripe_invoice_if_any(invoice_id: Optional[str]) -> None:
     """Void a draft invoice so a new checkout / intent can replace it."""
@@ -456,9 +470,7 @@ def stripe_invoice_address_custom_field_from_order(
     phone = format_us_phone_for_invoice(phone_raw)
 
     city_line = ", ".join(
-        p
-        for p in (city, f"{state} {postal}".strip() if (state or postal) else "")
-        if p
+        p for p in (city, f"{state} {postal}".strip() if (state or postal) else "") if p
     )
     addr_parts: list[str] = []
     if line1:
@@ -498,10 +510,9 @@ def stripe_invoice_address_custom_field_from_order(
     result.extend(address_fields)
 
     if len(result) > _STRIPE_INVOICE_CUSTOM_FIELDS_MAX:
-        result = result[: _STRIPE_INVOICE_CUSTOM_FIELDS_MAX]
+        result = result[:_STRIPE_INVOICE_CUSTOM_FIELDS_MAX]
 
     return result
-
 
 
 def stripe_invoice_description_for_order(order: Order) -> str:
@@ -570,7 +581,7 @@ def create_draft_stripe_invoice_for_order(
         "footer": footer,
         "metadata": meta,
     }
-    
+
     # Natively inject promo-code discounts into the Stripe Invoice!
     if getattr(order, "coupon_code", None):
         coupon = get_coupon_by_promo_code(order.coupon_code.strip())
@@ -596,11 +607,13 @@ def create_draft_stripe_invoice_for_order(
 def create_stripe_session(order: Order, domain, customer_id=None):
     """
     Creates a Stripe Checkout Session for the given order using native invoice generation
-    to eliminate duplicate transaction rows, auto-capturing funds upfront and relying on 
+    to eliminate duplicate transaction rows, auto-capturing funds upfront and relying on
     an automated refund webhook system if downstream fulfillment fails.
     """
     line_items = generate_order_line_items(order)
-    total_price_cents = sum(li["price_data"]["unit_amount"] * li["quantity"] for li in line_items)
+    total_price_cents = sum(
+        li["price_data"]["unit_amount"] * li["quantity"] for li in line_items
+    )
 
     coupon_data = None
     if order.coupon_code:
@@ -608,13 +621,13 @@ def create_stripe_session(order: Order, domain, customer_id=None):
         if coupon:
             print(f"Coupon found: {coupon.id} - {coupon.percent_off}% off")
             coupon_data = {"coupon": coupon.id}
-    
+
     invoice_data = {
         "description": stripe_invoice_description_for_order(order),
         "footer": stripe_invoice_footer_for_order(order),
-        "metadata": {"order_id": str(order.id)}
+        "metadata": {"order_id": str(order.id)},
     }
-    
+
     address_field = stripe_invoice_address_custom_field_from_order(order)
     if address_field:
         invoice_data["custom_fields"] = address_field
@@ -625,25 +638,28 @@ def create_stripe_session(order: Order, domain, customer_id=None):
         "line_items": line_items,
         "success_url": f"{domain}?status=success&session_id={{CHECKOUT_SESSION_ID}}&client_id={order.user_id}",
         "cancel_url": f"{domain}?client_id={order.user_id}&company_id={order.company_id}&status=cancel",
-        "invoice_creation": {
-            "enabled": True,
-            "invoice_data": invoice_data
-        },
+        "invoice_creation": {"enabled": True, "invoice_data": invoice_data},
         "payment_intent_data": {
             "capture_method": "automatic",
             "setup_future_usage": "off_session",
             "metadata": {
                 "_id": str(order.id),
-                "contact_name": (order.contact_first_name + " " + order.contact_last_name) if order.contact_first_name and order.contact_last_name else "",
+                "contact_name": (
+                    order.contact_first_name + " " + order.contact_last_name
+                )
+                if order.contact_first_name and order.contact_last_name
+                else "",
                 "contact_phone": order.contact_phone_sched or "",
                 "contact_email": order.contact_email_sched or "",
-                "preferred_datetime": order.preferred_datetime.isoformat() if order.preferred_datetime else "",
+                "preferred_datetime": order.preferred_datetime.isoformat()
+                if order.preferred_datetime
+                else "",
                 "unit": order.unit or "",
                 "client_id": order.company_id,
                 "company_name": order.company_name,
                 "user_id": order.user_id,
             },
-        }
+        },
     }
     if coupon_data:
         print(f"applying coupon")
@@ -667,7 +683,7 @@ def create_stripe_session(order: Order, domain, customer_id=None):
         raise e
 
 
-def get_coupon_by_promo_code(code)-> stripe_coupon |None:
+def get_coupon_by_promo_code(code) -> stripe_coupon | None:
     """
     Looks up a Stripe promotion code (not coupon ID) and returns the attached coupon if valid.
     """
@@ -675,31 +691,35 @@ def get_coupon_by_promo_code(code)-> stripe_coupon |None:
         if code:
             code = code.strip()
         print(f"Looking up promotion code: {code}")
-        promo_codes : ListObject["PromotionCode"] = stripe.PromotionCode.list(code=code, limit=1)
+        promo_codes: ListObject["PromotionCode"] = stripe.PromotionCode.list(
+            code=code, limit=1
+        )
         print(f"Promotion code: {promo_codes}")
         # print(f"promocode {json.dumps(promo_codes, indent=4)}")
         if promo_codes.data:
             promo = promo_codes.data[0]
             if not promo.active:
                 return None
-            
+
             # Extract coupon ID based on observed output structure (promotion.coupon)
             # or standard structure (coupon.id)
             coupon_id = None
-            
-            if hasattr(promo, 'promotion') and hasattr(promo.promotion, 'coupon'):
-                 coupon_id = promo.promotion.coupon
-            elif hasattr(promo, 'coupon'):
-                 if hasattr(promo.coupon, 'id'):
-                     coupon_id = promo.coupon.id
-                 else:
-                     coupon_id = promo.coupon # Assuming string ID if not expanded object
+
+            if hasattr(promo, "promotion") and hasattr(promo.promotion, "coupon"):
+                coupon_id = promo.promotion.coupon
+            elif hasattr(promo, "coupon"):
+                if hasattr(promo.coupon, "id"):
+                    coupon_id = promo.coupon.id
+                else:
+                    coupon_id = (
+                        promo.coupon
+                    )  # Assuming string ID if not expanded object
 
             if coupon_id:
                 # Retrieve the full coupon object to ensure we have all fields and validity
                 coupon = stripe_coupon.retrieve(coupon_id)
                 return coupon if coupon and coupon.valid else None
-                
+
             return None
         return None
     except stripe.APIConnectionError as e:
@@ -721,14 +741,14 @@ def sync_stripe_coupons():
             Coupon.objects.update_or_create(
                 code=sc.id,  # Use Stripe ID as the user-facing code
                 defaults={
-                    'name':sc.name,
-                    'stripe_coupon_id': sc.id,
-                    'amount_off': sc.get('amount_off'),
-                    'percent_off': sc.get('percent_off'),
-                    'duration': sc.get('duration'),
-                    'currency': sc.get('currency'),
-                    'valid': sc.get('valid', True),
-                }
+                    "name": sc.name,
+                    "stripe_coupon_id": sc.id,
+                    "amount_off": sc.get("amount_off"),
+                    "percent_off": sc.get("percent_off"),
+                    "duration": sc.get("duration"),
+                    "currency": sc.get("currency"),
+                    "valid": sc.get("valid", True),
+                },
             )
     except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout syncing coupons: {e}")
@@ -737,7 +757,8 @@ def sync_stripe_coupons():
         print("Stripe error while syncing coupons:", e)
         raise
 
-def get_coupon(user_coupon_code)->stripe_coupon | None:
+
+def get_coupon(user_coupon_code) -> stripe_coupon | None:
     """
     Syncs Stripe coupons to local DB, then retrieves the matched coupon.
     """
@@ -755,15 +776,13 @@ def get_coupon(user_coupon_code)->stripe_coupon | None:
         print(f"Error during coupon retrieval: {e}")
         return None
 
+
 def list_payment_methods(customer_id):
     """
     List card payment methods for a customer.
     """
     try:
-        methods = stripe.PaymentMethod.list(
-            customer=customer_id,
-            type="card"
-        )
+        methods = stripe.PaymentMethod.list(customer=customer_id, type="card")
         return methods.data
     except stripe.APIConnectionError as e:
         print(f"❌ Stripe Timeout listing payment methods: {e}")
@@ -774,6 +793,7 @@ def list_payment_methods(customer_id):
     except Exception as e:
         print(f"Error listing payment methods: {e}")
         return []
+
 
 def attach_payment_method(payment_method_id, customer_id):
     """
@@ -790,8 +810,8 @@ def attach_payment_method(payment_method_id, customer_id):
         raise e
     except stripe.InvalidRequestError as e:
         if "No such PaymentMethod" in str(e):
-             print(f"Payment method not found (possibly cross-account issue): {e}")
-             raise e
+            print(f"Payment method not found (possibly cross-account issue): {e}")
+            raise e
         # If already attached, usually safer to ignore or log
         print(f"Payment attachment warning: {e}")
         return False
@@ -799,14 +819,14 @@ def attach_payment_method(payment_method_id, customer_id):
         print(f"Error attaching payment method: {e}")
         raise e
 
+
 def set_default_payment_method(customer_id, payment_method_id):
     """
     Set the default payment method for a customer's invoice settings.
     """
     try:
         stripe.Customer.modify(
-            customer_id,
-            invoice_settings={"default_payment_method": payment_method_id}
+            customer_id, invoice_settings={"default_payment_method": payment_method_id}
         )
         return True
     except stripe.APIConnectionError as e:
@@ -815,6 +835,7 @@ def set_default_payment_method(customer_id, payment_method_id):
     except Exception as e:
         print(f"Error setting default payment method: {e}")
         raise e
+
 
 def create_stripe_setup_intent(customer_id):
     """
@@ -863,9 +884,7 @@ def payment_intent_from_paid_invoice(invoice):
         if not pi_ref:
             continue
         pi_obj = (
-            stripe.PaymentIntent.retrieve(pi_ref)
-            if isinstance(pi_ref, str)
-            else pi_ref
+            stripe.PaymentIntent.retrieve(pi_ref) if isinstance(pi_ref, str) else pi_ref
         )
         if getattr(pi_obj, "status", None) == "succeeded":
             return pi_obj
@@ -880,34 +899,43 @@ def payment_intent_from_paid_invoice(invoice):
 
     return resolved[-1][1]
 
-def create_payment_intent(amount, currency, customer_id, payment_method_id, metadata=None, order=None, frontend_domain=None):
+
+def create_payment_intent(
+    amount,
+    currency,
+    customer_id,
+    payment_method_id,
+    metadata=None,
+    order=None,
+    frontend_domain=None,
+):
     """
     Creates and confirms a PaymentIntent for a specific payment method (saved card)
     by routing directly through a Stripe Invoice to avoid transaction duplication.
     It builds the downstream NotaryDash order beforehand if an order is provided.
     """
     final_metadata = metadata or {}
-    
+
     if order:
         line_items = generate_order_line_items(order)
         # Format line items for metadata (Stripe limit 500 chars).
         items_summary = []
         for item in line_items:
-                p_data = item.get("price_data", {}).get("product_data", {})
-                name = p_data.get("name", "Unknown")
-                qty = item.get("quantity", 1)
-                items_summary.append(f"{qty}x {name}")
-        
+            p_data = item.get("price_data", {}).get("product_data", {})
+            name = p_data.get("name", "Unknown")
+            qty = item.get("quantity", 1)
+            items_summary.append(f"{qty}x {name}")
+
         items_str = ", ".join(items_summary)
         if len(items_str) > 495:
             items_str = items_str[:495] + "..."
-        
+
         final_metadata["line_items"] = items_str
-        final_metadata["order_id"] = str(order.id) # Ensure order_id is present
+        final_metadata["order_id"] = str(order.id)  # Ensure order_id is present
         final_metadata["stripe_payment_flow"] = "invoice_pay_saved_card"
 
         void_draft_stripe_invoice_if_any(getattr(order, "invoice_id", None))
-        
+
         # 1. Draft the Invoice
         try:
             draft_inv = create_draft_stripe_invoice_for_order(
@@ -924,11 +952,16 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
 
         # 2. Pre-build NotaryDash order BEFORE capturing funds
         try:
-            from .views import build_notary_order, _ghl_invoice_items_and_notary_product_names
+            from .views import (
+                build_notary_order,
+                _ghl_invoice_items_and_notary_product_names,
+            )
 
             client_user: dict = {}
             try:
-                uid = int(str(order.user_id)) if order.user_id not in (None, "") else None
+                uid = (
+                    int(str(order.user_id)) if order.user_id not in (None, "") else None
+                )
             except (TypeError, ValueError):
                 uid = None
             if uid is not None:
@@ -943,20 +976,24 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
                         "attr": nu.attr if isinstance(nu.attr, dict) else {},
                     }
 
-            _, notary_product_names = _ghl_invoice_items_and_notary_product_names(order, {})
+            _, notary_product_names = _ghl_invoice_items_and_notary_product_names(
+                order, {}
+            )
 
-            notary_order = build_notary_order(order, notary_product_names, client_user, {})
-            
+            notary_order = build_notary_order(
+                order, notary_product_names, client_user, {}
+            )
+
             if not notary_order:
                 raise Exception("Failed to generate Notary Order. Aborting payment.")
-                
+
             # Update draft invoice with Notary Order ID since we now have it
             if order.notary_order_id:
                 stripe.Invoice.modify(
                     draft_inv.id,
                     description=stripe_invoice_description_for_order(order),
                 )
-                
+
         except Exception as e:
             print(f"❌ Error compiling downstream Notary order: {e}")
             # Ensure invoice stays draft / voided
@@ -966,7 +1003,7 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
             raise e
 
     try:
-        # Instead of raw PaymentIntent create, let the invoice natively 
+        # Instead of raw PaymentIntent create, let the invoice natively
         # auto-generate the PaymentIntent & execute the charge
         if order and order.invoice_id:
             # Native Auto-generation & capture:
@@ -986,7 +1023,7 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
                 )
             # Apply metadata
             stripe.PaymentIntent.modify(intent.id, metadata=final_metadata)
-            
+
         else:
             # Fallback for generic payments entirely devoid of generic Orders
             intent = stripe.PaymentIntent.create(
@@ -996,13 +1033,13 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
                 payment_method=payment_method_id,
                 off_session=True,
                 confirm=True,
-                capture_method='automatic',
-                metadata=final_metadata
+                capture_method="automatic",
+                metadata=final_metadata,
             )
-        
+
         # Determine Redirect URL
         redirect_url = None
-        
+
         if order and frontend_domain:
             redirect_url = f"{frontend_domain}?status=success&payment_intent_id={intent.id}&client_id={order.user_id}"
 
@@ -1010,7 +1047,7 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
 
     except stripe.error.CardError as e:
         print(f"❌ Stripe CardError / 3DS requirement triggered: {e}")
-        # MUST re-raise CardError to ensure FormSubmissionAPIView detects it 
+        # MUST re-raise CardError to ensure FormSubmissionAPIView detects it
         # and issues a 400 response for 3DS action requirement
         raise e
     except stripe.error.APIConnectionError as e:
@@ -1019,5 +1056,6 @@ def create_payment_intent(amount, currency, customer_id, payment_method_id, meta
     except Exception as e:
         print(f"❌ Error creating PaymentIntent: {e}")
         import traceback
+
         traceback.print_exc()
         return None, None
