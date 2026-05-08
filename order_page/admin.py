@@ -132,8 +132,17 @@ class BundleOptionGroupAdmin(SortableAdminMixin, admin.ModelAdmin):
 
 @admin.register(Bundle)
 class BundleAdmin(admin.ModelAdmin):
-    list_display = ("name", "group", "discounted_price", "is_active", "sort_order")
-    list_filter = ("group", "is_active")
+    list_display = (
+        "name",
+        "group",
+        "discounted_price",
+        "is_active",
+        "mobile_home_discount_valid",
+        "multi_unit_valid",
+        "sort_order",
+    )
+    list_filter = ("group", "is_active", "mobile_home_discount_valid", "multi_unit_valid")
+    list_editable = ("mobile_home_discount_valid", "multi_unit_valid")
     search_fields = ("name", "description")
     ordering = ("group", "sort_order")
 
@@ -145,6 +154,13 @@ class BundleAdmin(admin.ModelAdmin):
         }),
         ("Pricing", {
             "fields": ("base_price", "discounted_price")
+        }),
+        ("Unit Pricing Rules", {
+            "fields": ("mobile_home_discount_valid", "multi_unit_valid"),
+            "description": (
+                "Toggle whether the mobile home discount and multi-unit tiered pricing "
+                "apply to this bundle. Both are enabled by default."
+            ),
         }),
         ("Option Groups", {
             "fields": ("option_groups",)
@@ -426,8 +442,17 @@ class SubmenuAdmin(admin.ModelAdmin):
 
 @admin.register(FormItem)
 class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
-    list_display = ("title", "identifier", "price", "protection_invalid", "sort_order")
-    list_editable = ("sort_order",)
+    list_display = (
+        "title",
+        "identifier",
+        "price",
+        "protection_invalid",
+        "mobile_home_discount_valid",
+        "multi_unit_valid",
+        "sort_order",
+    )
+    list_editable = ("mobile_home_discount_valid", "multi_unit_valid", "sort_order")
+    list_filter = ("protection_invalid", "mobile_home_discount_valid", "multi_unit_valid")
     search_fields = ("title", "identifier")
     autocomplete_fields = ("option_group",)
     ordering = ("sort_order",)
@@ -443,6 +468,13 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
                 "protection_invalid",
                 "option_group",
             )
+        }),
+        ("Unit Pricing Rules", {
+            "fields": ("mobile_home_discount_valid", "multi_unit_valid"),
+            "description": (
+                "Toggle whether the mobile home discount and multi-unit tiered pricing "
+                "apply to this item. Both are enabled by default."
+            ),
         }),
         ("Ordering", {"fields": ("sort_order",)}),
     )
