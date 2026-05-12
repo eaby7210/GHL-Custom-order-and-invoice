@@ -2,9 +2,13 @@ from core.services import OAuthServices
 import requests
 import json, time
 from django.conf import settings
+from django.core.cache import cache
 from requests.exceptions import RequestException
 
 DEFAULT_TIMEOUT = 25
+
+# NotaryDash get_client_one_user — avoid hammering API for stable profile data.
+NOTARY_CLIENT_ONE_USER_CACHE_SECONDS = 15 * 24 * 60 * 60
 
 def request_with_retry(url, headers, params=None, max_retries=5, delay=30, timeout=DEFAULT_TIMEOUT):
     """
@@ -196,6 +200,48 @@ class NotaryDashServices:
         return None
 
     @staticmethod
+    def get_client_once(id: str):
+        """
+        Single GET to /api/v2/clients/{id} with no retries (unlike get_client).
+
+        Use when one request is enough, e.g. to detect NotaryDash HTTP 429 without
+        retry/backoff loops. Client user details should still use get_client_one_user
+        (retries + cache).
+
+        Returns:
+            (body_dict, None) on 2xx JSON success.
+            (None, "rate_limited") on HTTP 429.
+            (None, "error") on network errors, non-2xx, or invalid JSON.
+        """
+        url = f"{BASE_URL}/api/v2/clients/{id}"
+        try:
+            response = requests.get(
+                url, headers=Notary_header, timeout=DEFAULT_TIMEOUT
+            )
+        except RequestException as exc:
+            print(f"❌ get_client_once network error: {exc}")
+            return None, "error"
+
+        if response.status_code == 429:
+            print("❌ get_client_once: NotaryDash returned 429 Too Many Requests")
+            return None, "rate_limited"
+
+        if 200 <= response.status_code < 300:
+            try:
+                body = response.json()
+            except ValueError:
+                print("❌ get_client_once: response was not valid JSON")
+                return None, "error"
+            print("✅ Client retrieved successfully (single request).")
+            return body, None
+
+        print(
+            f"❌ get_client_once failed: "
+            f"{response.status_code if response is not None else 'No Response'}"
+        )
+        return None, "error"
+
+    @staticmethod
     def get_client(id: str):
         url = f"{BASE_URL}/api/v2/clients/{id}"
         
@@ -211,13 +257,25 @@ class NotaryDashServices:
     
     @staticmethod
     def get_client_one_user(client_id, user_id):
+        env_tag = "test" if settings.NOTARY_TEST else "prod"
+        cache_key = (
+            "stripe_payment:notarydash:client_one_user:v1:"
+            f"{env_tag}:{client_id}:{user_id}"
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            print("✅ Single client user (cache hit).")
+            return cached
+
         url = f"{BASE_URL}/api/v2/clients/{client_id}/users/{user_id}"
 
         response = request_with_retry(url, headers=Notary_header)
 
         if response and 200 <= response.status_code < 300:
-            print(f"✅ Single client user retrieved successfully.")
-            return response.json()
+            print("✅ Single client user retrieved successfully.")
+            payload = response.json()
+            cache.set(cache_key, payload, NOTARY_CLIENT_ONE_USER_CACHE_SECONDS)
+            return payload
 
         print(f"❌ Failed: {response.status_code if response else 'No Response'}")
         return None

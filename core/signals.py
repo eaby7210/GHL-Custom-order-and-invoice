@@ -64,6 +64,21 @@ def order_post_save(sender, instance, created, **kwargs):
         except Exception as e:
             logger.error(f"Error dispatching webhook for order {instance.id}: {e}")
 
+    # ── V2 Supabase sync: send completed non-external orders ──
+    if (
+        not created
+        and instance.processing_status == "completed"
+        and not getattr(instance, "is_external_odr", False)
+    ):
+        try:
+            from stripe_payment.serializer import SupabaseOrderSerializer
+            v2_serializer = SupabaseOrderSerializer(instance)
+            v2_payload = v2_serializer.data
+            logger.info(f"Dispatching V2 sync webhook for order {instance.id}")
+            dispatch_webhook_event(WebhookEventKeys.ORDER_COMPLETED_V2_SYNC, v2_payload)
+        except Exception as e:
+            logger.error(f"Error dispatching V2 sync webhook for order {instance.id}: {e}")
+
 
 
 @receiver(post_save, sender=NotaryClientCompany)

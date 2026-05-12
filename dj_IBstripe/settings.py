@@ -35,12 +35,12 @@ REDIRECT_URI = config('REDIRECT_URI')
 
 GOOGLE_API_KEY = config('GOOGLE_API_KEY')
 STRIPE_TEST = str(config('STRIPE_LIVE')).lower() != 'true' if config('STRIPE_LIVE') else True
-
+# print(f"STRIPE_TEST: {STRIPE_TEST}")
 if STRIPE_TEST:
-    
+  
     STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY_TEST')
     STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY_TEST')
-else: 
+else:
     STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY')
     STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY')
 STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET')
@@ -94,6 +94,7 @@ INSTALLED_APPS = [
     'stripe_payment',
     'order_page',
     'tolt',
+    'rangefilter',
 ]
 
 OAUTH2_PROVIDER_APPLICATION_MODEL = 'oauth2_provider.Application'
@@ -160,25 +161,25 @@ if config('DB', default="") == 'psql':
             }
         } 
 else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-            'OPTIONS': {
-                'timeout': 60,
-            }
-        }
-    }
     # DATABASES = {
     #     'default': {
-    #         'ENGINE': config('DB_ENGINE'),
-    #         'NAME': config('DB_NAME'),
-    #         'HOST': config('DB_HOST'),
-    #         'USER': config('DB_USER'),
-    #         'PASSWORD': config('DB_PASSWORD'),
-    #         'port': config('DB_PORT')
+    #         'ENGINE': 'django.db.backends.sqlite3',
+    #         'NAME': BASE_DIR / 'db.sqlite3',
+    #         'OPTIONS': {
+    #             'timeout': 60,
+    #         }
     #     }
-    # } 
+    # }
+    DATABASES = {
+        'default': {
+            'ENGINE': config('DB_ENGINE'),
+            'NAME': config('DB_NAME'),
+            'HOST': config('DB_HOST'),
+            'USER': config('DB_USER'),
+            'PASSWORD': config('DB_PASSWORD'),
+            'port': config('DB_PORT')
+        }
+    } 
 STATIC_ROOT = BASE_DIR / "static"
 
 

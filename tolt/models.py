@@ -137,7 +137,6 @@ class Customer(models.Model):
         return obj, created
 
 
-
 class Link(models.Model):
     id = models.CharField(primary_key=True, max_length=64)  # Tolt Link ID
     param = models.CharField(max_length=64, null=True, blank=True)

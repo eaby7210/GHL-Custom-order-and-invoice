@@ -118,9 +118,18 @@ class Order(models.Model):
     contact_last_name_resched = models.CharField(max_length=100, null=True, blank=True)
     contact_phone_resched = models.CharField(max_length=20, null=True, blank=True)
 
+    is_external_odr = models.BooleanField(
+        default=False,
+        verbose_name="Is External Order",
+        help_text="Is External Order from Version 2 App",
+        editable=False,
+        blank=True
+    )
+
 
     @staticmethod
     def from_api(data, coupon, owner_id, company_name, client_team_id):
+
         postal_code = data.get("postalCode")
         unit_type = data.get("unitType")
         address = data.get("address")
@@ -603,7 +612,7 @@ class NotaryClientCompany(models.Model):
     owner_id = models.BigIntegerField()
     parent_company_id = models.BigIntegerField()
     
-    type = models.CharField(max_length=50)  # e.g., 'client'
+    type = models.CharField(max_length=50, default='client')  # e.g., 'client'
     company_name = models.CharField(max_length=255)
     parent_company_name = models.CharField(max_length=255, null=True, blank=True)
 
@@ -645,6 +654,24 @@ class NotaryUser(models.Model):
         null=True,
         blank=True,
         related_name='users'
+    )
+
+    # Many NotaryUsers may share the same Typeform partner dropdown mapping.
+    typeform_partner_mapping = models.ForeignKey(
+        "order_page.TypeformPartnerMapping",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notary_users",
+    )
+
+    # Tolt affiliate (from TypeformPartnerMapping.partner when present).
+    partner = models.ForeignKey(
+        "tolt.Partner",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notary_users",
     )
 
     attr = models.JSONField(default=dict, blank=True)

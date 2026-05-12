@@ -24,6 +24,52 @@ from django.core.cache import cache
 from .services import GoogleService
 
 
+def ensure_notary_client_company_local(company_id):
+    """
+    Ensure a NotaryClientCompany row exists for this NotaryDash client id.
+    If missing locally, GET /api/v2/clients/{id} and upsert (same shape as create flow).
+    Returns (NotaryClientCompany | None, error_message | None).
+    """
+    if company_id is None:
+        return None, "Missing company id for NotaryClientCompany"
+    try:
+        pk = int(company_id)
+    except (TypeError, ValueError):
+        return None, "Invalid company id for NotaryClientCompany"
+
+    existing = NotaryClientCompany.objects.filter(id=pk).first()
+    if existing:
+        return existing, None
+
+    client_response = NotaryDashServices.get_client(str(pk))
+    if not client_response:
+        return None, "Failed to fetch client from NotaryDash for last_company_id"
+
+    client_data = client_response.get("data") or {}
+    remote_id = client_data.get("id")
+    if not remote_id:
+        return None, "NotaryDash client response missing id"
+
+    client_obj, _ = NotaryClientCompany.objects.update_or_create(
+        id=remote_id,
+        defaults={
+            "owner_id": client_data.get("owner_id"),
+            "parent_company_id": client_data.get("parent_company_id"),
+            "type": client_data.get("type"),
+            "company_name": client_data.get("company_name"),
+            "parent_company_name": client_data.get("parent_company_name"),
+            "attr": client_data.get("attr", {}),
+            "address": client_data.get("address") or {},
+            "deleted_at": client_data.get("deleted_at"),
+            "created_at": client_data.get("created_at"),
+            "updated_at": client_data.get("updated_at"),
+            "active": client_data.get("active", True),
+        },
+    )
+    print(f"✅ Synced NotaryClientCompany from API: {client_obj} (ID: {client_obj.id})")
+    return client_obj, None
+
+
 class LatestTermsOfConditionsView(APIView):
     """
     Returns the latest Terms of Conditions (by updated_at).
@@ -63,13 +109,13 @@ class TypeFormWebhook(APIView):
                 resp_obj = TypeformParser.save_webhook(payload)
                 
                 # Check for Partner Mappings and update GHL contact
-                email = resp_obj.get_answer_by_title("Email")
-                if email:
-                    from .tasks import ghl_update_contact
-                    print(f"Triggering ghl_update_contact for {email}")
-                    ghl_update_contact(email, resp_obj.id)
-                else:
-                    print("No email found in Typeform response, skipping ghl_update_contact task.")
+                # email = resp_obj.get_answer_by_title("Email")
+                # if email:
+                #     from .tasks import ghl_update_contact
+                #     print(f"Triggering ghl_update_contact for {email}")
+                #     ghl_update_contact(email, resp_obj.id)
+                # else:
+                #     print("No email found in Typeform response, skipping ghl_update_contact task.")
 
                 return Response({"status": "ok", "response_id": resp_obj.id}, status=status.HTTP_201_CREATED) #type:ignore
 
@@ -122,22 +168,65 @@ class NotaryCreationView(APIView):
         ).select_related('form').prefetch_related('answers__field')
 
         recent_response = recent_responses.first()
-        recent_response = recent_responses.first()
         if not recent_response:
             print("[NotaryCreationView] No recent Typeform response found after filtering.")
             return Response({"message": "No recent Typeform response found"}, status=status.HTTP_204_NO_CONTENT)
 
         print(f"Using recent response: {recent_response.id}") #type:ignore
 
-        # 2️⃣ Build payloads
+        partner_mapping = recent_response.resolve_typeform_partner_mapping()
+        if partner_mapping:
+            print(
+                f"[NotaryCreationView] Typeform partner mapping: "
+                f"{partner_mapping.id} ({partner_mapping.choice_label})"
+            )
+
+        # Hidden ref → Tolt Link (resolve whenever hidden may carry ref).
+        partner_from_hidden = recent_response.resolve_partner_from_hidden_tolt_link()
+        if partner_from_hidden:
+            print(
+                f"[NotaryCreationView] Partner from Typeform hidden ref → "
+                f"Tolt partner_id={partner_from_hidden.id}"
+            )
+
+        # partner_id: use mapping FK if set, else hidden ref; vice versa is the
+        # same (one or the other). Skip only when neither yields a partner.
+        partner_id_from_mapping = None
+        if partner_mapping is not None:
+            partner_id_from_mapping = partner_mapping.partner_id
+            if partner_id_from_mapping is None:
+                pmap_partner = getattr(partner_mapping, "partner", None)
+                if pmap_partner is not None:
+                    partner_id_from_mapping = pmap_partner.id
+
+        partner_id_from_hidden = (
+            partner_from_hidden.id if partner_from_hidden is not None else None
+        )
+
+        resolved_partner_id = partner_id_from_mapping or partner_id_from_hidden
+
+        if resolved_partner_id is not None:
+            if not partner_id_from_mapping and partner_id_from_hidden:
+                print(
+                    "[NotaryCreationView] partner_id from hidden only "
+                    f"(mapping unset): {resolved_partner_id}"
+                )
+            elif (
+                partner_id_from_mapping
+                and partner_id_from_hidden
+                and partner_id_from_mapping != partner_id_from_hidden
+            ):
+                print(
+                    "[NotaryCreationView] mapping vs hidden differ; "
+                    f"using mapping partner_id={partner_id_from_mapping}"
+                )
+
         client_payload = {
             "company_name": recent_response.get_answer_by_title("Company"),
         }
 
         client_user_payload = {
             "user": {
-                "password": "test1234",
-                "password_confirmation": "test1234",
                 "first_name": recent_response.get_answer_by_title("First name"),
                 "last_name": recent_response.get_answer_by_title("Last name"),
                 "email": recent_response.get_answer_by_title("Email"),
@@ -209,30 +298,45 @@ class NotaryCreationView(APIView):
         company_id = last_company_id if last_company_id else client_id
 
         if user_id:
+            _, sync_err = ensure_notary_client_company_local(company_id)
+            if sync_err:
+                return Response(
+                    {"message": sync_err},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
             # Check for existing users to determine admin status
             is_first_user = not NotaryUser.objects.filter(last_company_id=company_id).exists()
             
+            user_defaults = {
+                "first_name": user_data.get("first_name"),
+                "last_name": user_data.get("last_name"),
+                "email": user_data.get("email"),
+                "photo_url": user_data.get("photo_url"),
+                "country_code": user_data.get("country_code"),
+                "tz": user_data.get("tz"),
+                "attr": user_data.get("attr", {}),
+                "last_login_at": user_data.get("last_login_at"),
+                "last_ip": user_data.get("last_ip"),
+                "last_company_id": company_id,
+                "email_unverified": user_data.get("email_unverified"),
+                "disabled": user_data.get("disabled"),
+                "deleted_at": user_data.get("deleted_at"),
+                "created_at": user_data.get("created_at"),
+                "updated_at": user_data.get("updated_at"),
+                "type": user_data.get("type"),
+            }
+            # Link mapping row when present; always set partner_id when we
+            # resolved one (mapping FK or hidden ref — partner_id is canonical).
+            if partner_mapping is not None:
+                user_defaults["typeform_partner_mapping"] = partner_mapping
+            if resolved_partner_id is not None:
+                user_defaults["partner_id"] = resolved_partner_id
+
             # ✅ Save NotaryUser locally
             user_obj, _ = NotaryUser.objects.update_or_create(
                 id=user_id,
-                defaults={
-                    "first_name": user_data.get("first_name"),
-                    "last_name": user_data.get("last_name"),
-                    "email": user_data.get("email"),
-                    "photo_url": user_data.get("photo_url"),
-                    "country_code": user_data.get("country_code"),
-                    "tz": user_data.get("tz"),
-                    "attr": user_data.get("attr", {}),
-                    "last_login_at": user_data.get("last_login_at"),
-                    "last_ip": user_data.get("last_ip"),
-                    "last_company_id": user_data.get("last_company_id", company_id),
-                    "email_unverified": user_data.get("email_unverified"),
-                    "disabled": user_data.get("disabled"),
-                    "deleted_at": user_data.get("deleted_at"),
-                    "created_at": user_data.get("created_at"),
-                    "updated_at": user_data.get("updated_at"),
-                    "type": user_data.get("type"),
-                }
+                defaults=user_defaults,
             )
             
             # Apply admin status if applicable and new logic dictates
@@ -243,6 +347,9 @@ class NotaryCreationView(APIView):
                 user_obj.is_admin = True
                 user_obj.save()
 
+            if user_obj.partner_id:
+                from .tasks import create_tolt_customer_for_notary_user
+                create_tolt_customer_for_notary_user.delay(user_obj.id)
 
             print(f"✅ Saved NotaryUser: {user_obj}")
 
@@ -260,6 +367,9 @@ class NotaryCreationView(APIView):
 
 
 
+SERVICE_LOOKUP_CACHE_SECONDS = 15 * 60
+
+
 class ServiceLookupView(APIView):
     """
     Returns the detailed service + bundle structure for a given company.
@@ -267,10 +377,21 @@ class ServiceLookupView(APIView):
     Otherwise:
       - Attempts to find a variance assigned to the company.
       - Falls back to default if none exists.
+
+    Successful responses are cached for SERVICE_LOOKUP_CACHE_SECONDS (15 minutes).
     """
+
+    @staticmethod
+    def _service_lookup_cache_key(company_id: str) -> str:
+        return f"order_page:service_lookup:v1:{company_id.strip()}"
 
     def get(self, request, company_id: str):
         try:
+            cache_key = self._service_lookup_cache_key(company_id)
+            cached_payload = cache.get(cache_key)
+            if cached_payload is not None:
+                return Response(cached_payload, status=status.HTTP_200_OK)
+
             # Case 1: If explicitly requesting the default
             if company_id.lower() == "default":
                 variance = ServiceVariance.get_default()
@@ -306,7 +427,9 @@ class ServiceLookupView(APIView):
 
             # Serialize result
             serializer = ServiceVarianceSerializer(variance)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            data = serializer.data
+            cache.set(cache_key, data, SERVICE_LOOKUP_CACHE_SECONDS)
+            return Response(data, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response(

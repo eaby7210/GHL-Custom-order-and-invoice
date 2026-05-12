@@ -132,10 +132,22 @@ class BundleSerializer(serializers.ModelSerializer):
     price = serializers.DecimalField(source="discounted_price", max_digits=10, decimal_places=2)
     options = serializers.SerializerMethodField()
     modalForm = BundleModalFormSerializer(source="modal_form", read_only=True)
+    mobileHomeDiscountValid = serializers.BooleanField(source="mobile_home_discount_valid", read_only=True)
+    multiUnitValid = serializers.BooleanField(source="multi_unit_valid", read_only=True)
 
     class Meta:
         model = Bundle
-        fields = ["name", "description", "basePrice","min_lead_time", "price", "options",  "modalForm", ]
+        fields = [
+            "name",
+            "description",
+            "basePrice",
+            "min_lead_time",
+            "price",
+            "options",
+            "modalForm",
+            "mobileHomeDiscountValid",
+            "multiUnitValid",
+        ]
 
     def get_options(self, obj):
         """
@@ -260,6 +272,8 @@ class FormItemSerializer(serializers.ModelSerializer):
     protectionInvalid = serializers.BooleanField(source="protection_invalid")
     options = OptionGroupSerializer(source="option_group", read_only=True)
     submenuPriceChange = serializers.SerializerMethodField()
+    mobileHomeDiscountValid = serializers.BooleanField(source="mobile_home_discount_valid", read_only=True)
+    multiUnitValid = serializers.BooleanField(source="multi_unit_valid", read_only=True)
 
     class Meta:
         model = FormItem
@@ -273,6 +287,8 @@ class FormItemSerializer(serializers.ModelSerializer):
             "protectionInvalid",
             "options",
             "submenuPriceChange",
+            "mobileHomeDiscountValid",
+            "multiUnitValid",
         ]
 
     def get_submenuPriceChange(self, obj):

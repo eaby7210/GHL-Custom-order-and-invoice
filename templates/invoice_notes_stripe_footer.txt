@@ -1,0 +1,51 @@
+{% comment %}
+Plain-text invoice notes for Stripe Invoice.footer (API max 5000 chars).
+Stripe footers are plain text only (PDF/UI do not interpret HTML).
+Mirrors invoice_notes.html without markup.
+{% endcomment %}
+{% for bundle in order.bundles.all %}• {{ bundle.name }}
+{% for modal_option in bundle.modal_options.all %}  - {{ modal_option.name }}: {{ modal_option.value }}
+{% endfor %}
+{% endfor %}{% for service in order.a_la_carte_services.all %}{% for item in service.items.all %}• {{ item.title }}
+{% for modal_option in item.modal_options.all %}  - {{ modal_option.name }}: {{ modal_option.value }}
+{% endfor %}{% if item.disclosures.all %}
+  Agreed disclosures:{% for disclosure in item.disclosures.all %}{% if disclosure.value %}
+  - {{ disclosure.name }}{% endif %}{% endfor %}
+{% endif %}
+{% endfor %}{% endfor %}
+
+Occupancy status: {% if order.occupancy_vacant %}Vacant{% elif order.occupancy_occupied %}{% if order.occupancy_status == "owner_occupied" %}Owner occupied{% elif order.occupancy_status == "tenant_occupied" %}Tenant occupied{% else %}Occupied{% endif %}{% else %}Not specified{% endif %}
+
+Appointment status: {% if order.appointment_confirmed %}Confirmed{% else %}Not confirmed{% endif %}
+{% if order.rescheduling_option %}Rescheduling: {{ order.rescheduling_option|title }}{% if order.contact_first_name_resched or order.contact_last_name_resched %}
+Contact: {{ order.contact_first_name_resched }} {{ order.contact_last_name_resched }}{% endif %}{% if order.contact_phone_resched %}
+Phone: {{ order.contact_phone_resched }}{% endif %}
+
+{% endif %}Access:
+{% if order.access_lock_box %}• Lock box{% if order.lock_box_code %} (code: {{ order.lock_box_code }}){% endif %}{% if order.lock_box_location %}
+  Location: {{ order.lock_box_location }}{% endif %}
+{% endif %}{% if order.access_app_lock_box %}• App lock box{% if order.app_lock_link %}
+  App link: {{ order.app_lock_link }}{% endif %}
+{% endif %}{% if order.access_meet_contact %}• Meet with contact
+{% endif %}{% if order.access_hidden_key %}• Hidden key{% if order.hidden_key_directions %}
+  Directions: {{ order.hidden_key_directions }}{% endif %}
+{% endif %}{% if order.access_community_access %}• Community access{% if order.community_access_instructions %}
+  Instructions: {{ order.community_access_instructions }}{% endif %}
+{% endif %}{% if order.access_door_code %}• Door code{% if order.door_code_value %} ({{ order.door_code_value }}){% endif %}
+{% endif %}{% if not order.access_lock_box and not order.access_app_lock_box and not order.access_meet_contact and not order.access_hidden_key and not order.access_community_access and not order.access_door_code %}• No access options specified
+{% endif %}
+{% if order.sp_instruction %}
+
+Special instructions:
+{{ order.sp_instruction|striptags }}
+{% endif %}{% if order_status_emails_list %}
+
+Order status updates (participants):{% for email in order_status_emails_list %}{% if email %}
+• {{ email }}{% endif %}{% endfor %}
+{% endif %}
+
+All orders are subject to InvestorBootz's Terms of Service, service scope, cancellation/re-trip policy, and refund/adjustment policy. Completed services are generally non-refundable once dispatched, performed, or delivered.
+
+Please report any deliverable concerns within 48 hours to support@investorbootz.com or 800-940-8314.
+
+**For billing questions, contact accounting@investorbootz.com.**

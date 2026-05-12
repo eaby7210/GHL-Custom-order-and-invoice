@@ -25,6 +25,7 @@ django-admin-sortable2 = "*"
 django-oauth-toolkit = "*"
 requests-unixsocket = "*"
 pytz = "*"
+django-admin-rangefilter = "*"
 
 [dev-packages]
 

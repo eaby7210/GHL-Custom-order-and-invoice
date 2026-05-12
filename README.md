@@ -91,3 +91,87 @@ This setup is enabled by the following configuration in the codebase:
 ### Notes
 
 *   **Token Expiry**: Access tokens have an expiration time (default is 10 hours or 36000 seconds). You will need to request a new token using the Client Credentials flow when it expires. Refresh tokens are generally not issued for the Client Credentials grant type.
+
+---
+
+## Business Logic: Service Configuration & Ordering
+
+### Overview
+
+The system is a **configurable product catalog** for property inspection services. Clients (notary companies) place orders choosing from **bundles** (package deals) or **individual à la carte services**. The catalog is versioned per-client so different companies can see different menus and pricing.
+
+### Menu Resolution — ServiceVariance
+
+Every client company sees a specific **variance** (version) of the service catalog:
+
+1. The system first looks for an **active variance assigned to the specific client** (`ServiceVariance.clients` M2M)
+2. If none found, it falls back to the **active default variance** (`is_default=True`)
+3. Only variances with `is_active=True` are served
+
+Each variance contains:
+- **One** `ServiceCategory` (FK) → the à la carte menu
+- **Many** `BundleGroup` objects (M2M) → the bundle packages
+- **Bundle order protection** settings (type + value)
+
+### Bundle Path (Package Deals)
+
+```
+BundleGroup → Bundle → BundleOptionGroup → BundleOptionItem
+                    └→ BundleModalForm → BundleModalField
+                                     └→ CheckDisclosure
+```
+
+| Model | Purpose |
+|---|---|
+| **BundleGroup** | Visual grouping with header/subheader |
+| **Bundle** | Package with `base_price` (original) and `discounted_price` (savings), plus `min_lead_time` |
+| **BundleOptionGroup** | Add-on selection groups with `minimum_required` |
+| **BundleOptionItem** | Individual add-ons with `price_change` (additional cost) |
+| **BundleModalForm** | Popup form for extra details (signer name, dates, etc.) |
+| **CheckDisclosure** | Mandatory checkbox agreements |
+
+### À La Carte Path (Individual Services)
+
+```
+ServiceCategory → IndividualService → ServiceForm → FormItem → OptionGroup → OptionItem
+                                                 └→ Submenu → SubmenuItem
+                                                 └→ ModalOption → ModalOptionToggle
+```
+
+| Model | Purpose |
+|---|---|
+| **ServiceCategory** | Groups multiple individual services |
+| **IndividualService** | Single service with order protection settings and `service_id` (used in NotaryDash product name) |
+| **ServiceForm** | Configuration screen containing form items, submenus, and modal options |
+| **FormItem** | Selectable item with `price`, `base_price`, `min_lead_time`, and `protection_invalid` flag |
+| **OptionGroup → OptionItem** | Checkbox sub-selections; each item has `price_type` (`priceAdd` or `priceChange`) and `price_value` |
+| **Submenu → SubmenuItem** | Quantity selectors (`counter`) or radio buttons (`radio`) with min/max constraints |
+| **SubmenuPriceChange** | Links a FormItem to a SubmenuItem with `change_type`: `"add"` (flat per unit) or `"multiple"` (multiplier) |
+| **ModalOption** | Pop-up input fields (text/email/number/date), scoped by `valid_for_items` and `check_disclosure` |
+| **ModalOptionToggle** | Checkbox/radio that controls when a modal option is visible |
+
+### Pricing Rules
+
+| Rule | Mechanism |
+|---|---|
+| Bundle savings | `base_price - discounted_price` (pre-calculated) |
+| Add-on pricing | `BundleOptionItem.price_change` added to bundle total |
+| Option item pricing | `OptionItem.price_type`: `priceAdd` (adds) or `priceChange` (replaces) |
+| Dynamic counter/radio pricing | `SubmenuPriceChange`: `add` (flat per unit) or `multiple` (multiplier on base) |
+| Volume discounts | `DiscountLevel` slabs (e.g., 2 items → 20%, 3 items → 30%) |
+| Order protection | Percent or fixed surcharge, configured at variance level (bundles) or service level (à la carte). Items with `protection_invalid=True` are exempt |
+
+### Ordering Flow
+
+1. **Identify client** → resolve `ServiceVariance` (client-specific or default)
+2. **Display menu** → bundles and/or à la carte services
+3. **Configure selections** → options, submenus, modal fields, disclosures
+4. **Calculate pricing** → base + options + submenu modifiers − volume discount + order protection
+5. **Submit order** → create product + order in NotaryDash
+
+### V2 Webhook Sync
+
+When a non-external order's `processing_status` changes to `completed`, a webhook (`order.completed.v2_sync`) dispatches the order data formatted for the V2 Supabase `orders` table. Key mappings:
+- `notary_order_id` → `external_id` (deduplication key)
+- `company_id` / `user_id` → resolved via `users.nd_user_id` / `users.nd_company_id` in Supabase
+

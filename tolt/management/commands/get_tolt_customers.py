@@ -20,7 +20,7 @@ class Command(BaseCommand):
             try:
                 response = ToltService.fetch_customers(
                     starting_after=starting_after,
-                    per_page=2
+                    per_page=100
                 )
                 print(json.dumps(response, indent=3))
             except Exception as e:
