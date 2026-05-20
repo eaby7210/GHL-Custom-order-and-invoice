@@ -48,7 +48,7 @@ class BundleOptionItemInline(admin.TabularInline):
 class BundleOptionItemAdmin(SortableAdminMixin, admin.ModelAdmin):
     list_display = ("label", "price_change", "disabled", "sort_order", "view_groups")
     search_fields = ("label", "identifier")
-    list_editable = ("sort_order", "disabled")
+    list_editable = ("disabled",)
     ordering = ("sort_order",)
 
     def view_groups(self, obj):
@@ -70,7 +70,7 @@ class BundleOptionItemAdmin(SortableAdminMixin, admin.ModelAdmin):
 class BundleOptionGroupAdmin(SortableAdminMixin, admin.ModelAdmin):
     list_display = ( "minimum_required", "sort_order", "view_bundles", "manage_items")
     search_fields = ("type",)
-    list_editable = ("sort_order",)
+
     ordering = ("sort_order",)
     inlines = [BundleOptionItemInline]
 
@@ -290,7 +290,7 @@ class ServiceVarianceAdmin(admin.ModelAdmin):
 @admin.register(OptionItem)
 class OptionItemAdmin(admin.ModelAdmin):
     list_display = ("label", "identifier", "value", "disabled",  "sort_order")
-    list_editable = ("sort_order",)
+  
     search_fields = ("label", "identifier")
     list_filter = ("disabled",)
     ordering = ("sort_order",)
@@ -336,7 +336,6 @@ class ModalOptionToggleInline(admin.TabularInline):
 @admin.register(ModalOption)
 class ModalOptionAdmin(admin.ModelAdmin):
     list_display = ("label", "field_name", "field_type", "required", "sort_order")
-    list_editable = ("sort_order",)
     search_fields = ("label", "field_name")
     list_filter = ("field_type", "required")
     ordering = ("sort_order",)
@@ -346,7 +345,6 @@ class ModalOptionAdmin(admin.ModelAdmin):
 @admin.register(Disclosure)
 class DisclosureAdmin(admin.ModelAdmin):
     list_display = ("service", "type", "message", "sort_order")
-    list_editable = ("sort_order",)
     search_fields = ("message", "service__title")
     list_filter = ("type",)
     ordering = ("sort_order",)
@@ -375,7 +373,6 @@ class SubmenuItemAdmin(admin.ModelAdmin):
         "label", "identifier", "type", "display_value",
         "min_value", "max_value", "sort_order"
     )
-    list_editable = ("sort_order",)
     search_fields = ("label", "identifier")
     list_filter = ("type",)
     ordering = ("sort_order",)
@@ -429,7 +426,6 @@ class SubmenuItemAdmin(admin.ModelAdmin):
 @admin.register(Submenu)
 class SubmenuAdmin(admin.ModelAdmin):
     list_display = ("name", "type", "sort_order")
-    list_editable = ("sort_order",)
     filter_horizontal = ("items",)
     search_fields = ("name",)
     ordering = ("sort_order",)
@@ -451,7 +447,7 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
         "multi_unit_valid",
         "sort_order",
     )
-    list_editable = ("mobile_home_discount_valid", "multi_unit_valid", "sort_order")
+    list_editable = ("mobile_home_discount_valid", "multi_unit_valid")
     list_filter = ("protection_invalid", "mobile_home_discount_valid", "multi_unit_valid")
     search_fields = ("title", "identifier")
     autocomplete_fields = ("option_group",)
@@ -515,7 +511,7 @@ class IndividualServiceAdmin(SummernoteModelAdmin):
         "order_protection_value",
         "sort_order",
     )
-    list_editable = ("sort_order",)
+ 
     search_fields = ("title", "service_id")
     list_filter = ("order_protection_type", "order_protection_disabled")
     ordering = ("sort_order",)
@@ -549,7 +545,7 @@ class IndividualServiceAdmin(SummernoteModelAdmin):
 @admin.register(ServiceCategory)
 class ServiceCategoryAdmin(admin.ModelAdmin):
     list_display = ("title", "description", "sort_order")
-    list_editable = ("sort_order",)
+
     filter_horizontal = ("services",)
     search_fields = ("title",)
     ordering = ("sort_order",)
@@ -612,7 +608,7 @@ class DiscountLevelAdmin(admin.ModelAdmin):
 @admin.register(CheckDiscloure)
 class CheckDiscloureAdmin(admin.ModelAdmin):
     list_display = ("name", "required", "sort_order", "active_flag")
-    list_editable = ("sort_order", "active_flag", "required")
+    list_editable = ( "active_flag", "required")
     search_fields = ("name", "message")
     list_filter = ("active_flag", "required")
     ordering = ("sort_order",)

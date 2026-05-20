@@ -105,7 +105,14 @@ class TypeFormWebhook(APIView):
                     # print(f'Recieved Payload {json.dumps(payload, indent=4)}')
                 except json.JSONDecodeError:
                     return HttpResponseBadRequest("Invalid JSON payload")
-                
+
+                email = None
+                for ans in payload.get("form_response", {}).get("answers", []):
+                    if "email" in ans:
+                        email = ans["email"]
+                        break
+                print(f"Recieving typeform webhook with email {email}")
+
                 resp_obj = TypeformParser.save_webhook(payload)
                 
                 # Check for Partner Mappings and update GHL contact
