@@ -475,6 +475,58 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
         ("Ordering", {"fields": ("sort_order",)}),
     )
 
+    def changelist_view(self, request, extra_context=None):
+        """Debug list-editable save: log POST payload and formset validation."""
+        if request.method == "POST":
+            prefix = "form"
+            print("\n" + "=" * 60)
+            print("[FormItemAdmin] changelist POST received")
+            print(f"  path: {request.path}")
+            print(f"  _save in POST: {'_save' in request.POST}")
+            print(f"  list_editable: {self.list_editable}")
+            print(f"  POST keys ({len(request.POST)}): {sorted(request.POST.keys())}")
+            for key in sorted(request.POST.keys()):
+                if key.startswith(f"{prefix}-"):
+                    print(f"    {key} = {request.POST.get(key)!r}")
+            for mgmt in (
+                f"{prefix}-TOTAL_FORMS",
+                f"{prefix}-INITIAL_FORMS",
+                f"{prefix}-MIN_NUM_FORMS",
+                f"{prefix}-MAX_NUM_FORMS",
+            ):
+                print(f"    {mgmt} = {request.POST.get(mgmt)!r}")
+            edited_pks = self._get_edited_object_pks(request, prefix)
+            print(f"  edited object PKs ({len(edited_pks)}): {edited_pks}")
+            total = request.POST.get(f"{prefix}-TOTAL_FORMS")
+            initial = request.POST.get(f"{prefix}-INITIAL_FORMS")
+            if total and int(total) != len(edited_pks):
+                print(
+                    f"  WARNING: TOTAL_FORMS={total} but "
+                    f"{len(edited_pks)} form-*-id keys in POST"
+                )
+
+        response = super().changelist_view(request, extra_context)
+
+        if request.method == "POST" and hasattr(response, "context_data"):
+            cl = response.context_data.get("cl")
+            if cl and getattr(cl, "formset", None):
+                fs = cl.formset
+                print("[FormItemAdmin] changelist formset after super()")
+                print(f"  is_valid: {fs.is_valid()}")
+                print(f"  non_form_errors: {list(fs.non_form_errors())}")
+                if fs.management_form.errors:
+                    print(f"  management_form errors: {fs.management_form.errors}")
+                for i, form in enumerate(fs.forms):
+                    if form.errors:
+                        print(
+                            f"  form[{i}] pk={form.instance.pk} "
+                            f"errors={dict(form.errors)}"
+                        )
+                if not fs.is_valid():
+                    print("  (no per-form errors above => check management form / TOTAL_FORMS mismatch)")
+            print("=" * 60 + "\n")
+
+        return response
 
 
 @admin.register(ServiceForm)
