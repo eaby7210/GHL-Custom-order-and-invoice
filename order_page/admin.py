@@ -48,7 +48,7 @@ class BundleOptionItemInline(admin.TabularInline):
 class BundleOptionItemAdmin(SortableAdminMixin, admin.ModelAdmin):
     list_display = ("label", "price_change", "disabled", "sort_order", "view_groups")
     search_fields = ("label", "identifier")
-    list_editable = ("sort_order", "disabled")
+    list_editable = ("disabled",)
     ordering = ("sort_order",)
 
     def view_groups(self, obj):
@@ -70,7 +70,7 @@ class BundleOptionItemAdmin(SortableAdminMixin, admin.ModelAdmin):
 class BundleOptionGroupAdmin(SortableAdminMixin, admin.ModelAdmin):
     list_display = ( "minimum_required", "sort_order", "view_bundles", "manage_items")
     search_fields = ("type",)
-    list_editable = ("sort_order",)
+
     ordering = ("sort_order",)
     inlines = [BundleOptionItemInline]
 
@@ -290,7 +290,7 @@ class ServiceVarianceAdmin(admin.ModelAdmin):
 @admin.register(OptionItem)
 class OptionItemAdmin(admin.ModelAdmin):
     list_display = ("label", "identifier", "value", "disabled",  "sort_order")
-    list_editable = ("sort_order",)
+  
     search_fields = ("label", "identifier")
     list_filter = ("disabled",)
     ordering = ("sort_order",)
@@ -336,7 +336,6 @@ class ModalOptionToggleInline(admin.TabularInline):
 @admin.register(ModalOption)
 class ModalOptionAdmin(admin.ModelAdmin):
     list_display = ("label", "field_name", "field_type", "required", "sort_order")
-    list_editable = ("sort_order",)
     search_fields = ("label", "field_name")
     list_filter = ("field_type", "required")
     ordering = ("sort_order",)
@@ -346,7 +345,6 @@ class ModalOptionAdmin(admin.ModelAdmin):
 @admin.register(Disclosure)
 class DisclosureAdmin(admin.ModelAdmin):
     list_display = ("service", "type", "message", "sort_order")
-    list_editable = ("sort_order",)
     search_fields = ("message", "service__title")
     list_filter = ("type",)
     ordering = ("sort_order",)
@@ -375,7 +373,6 @@ class SubmenuItemAdmin(admin.ModelAdmin):
         "label", "identifier", "type", "display_value",
         "min_value", "max_value", "sort_order"
     )
-    list_editable = ("sort_order",)
     search_fields = ("label", "identifier")
     list_filter = ("type",)
     ordering = ("sort_order",)
@@ -429,7 +426,6 @@ class SubmenuItemAdmin(admin.ModelAdmin):
 @admin.register(Submenu)
 class SubmenuAdmin(admin.ModelAdmin):
     list_display = ("name", "type", "sort_order")
-    list_editable = ("sort_order",)
     filter_horizontal = ("items",)
     search_fields = ("name",)
     ordering = ("sort_order",)
@@ -451,7 +447,7 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
         "multi_unit_valid",
         "sort_order",
     )
-    list_editable = ("mobile_home_discount_valid", "multi_unit_valid", "sort_order")
+    list_editable = ("mobile_home_discount_valid", "multi_unit_valid")
     list_filter = ("protection_invalid", "mobile_home_discount_valid", "multi_unit_valid")
     search_fields = ("title", "identifier")
     autocomplete_fields = ("option_group",)
@@ -479,6 +475,58 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
         ("Ordering", {"fields": ("sort_order",)}),
     )
 
+    def changelist_view(self, request, extra_context=None):
+        """Debug list-editable save: log POST payload and formset validation."""
+        if request.method == "POST":
+            prefix = "form"
+            print("\n" + "=" * 60)
+            print("[FormItemAdmin] changelist POST received")
+            print(f"  path: {request.path}")
+            print(f"  _save in POST: {'_save' in request.POST}")
+            print(f"  list_editable: {self.list_editable}")
+            print(f"  POST keys ({len(request.POST)}): {sorted(request.POST.keys())}")
+            for key in sorted(request.POST.keys()):
+                if key.startswith(f"{prefix}-"):
+                    print(f"    {key} = {request.POST.get(key)!r}")
+            for mgmt in (
+                f"{prefix}-TOTAL_FORMS",
+                f"{prefix}-INITIAL_FORMS",
+                f"{prefix}-MIN_NUM_FORMS",
+                f"{prefix}-MAX_NUM_FORMS",
+            ):
+                print(f"    {mgmt} = {request.POST.get(mgmt)!r}")
+            edited_pks = self._get_edited_object_pks(request, prefix)
+            print(f"  edited object PKs ({len(edited_pks)}): {edited_pks}")
+            total = request.POST.get(f"{prefix}-TOTAL_FORMS")
+            initial = request.POST.get(f"{prefix}-INITIAL_FORMS")
+            if total and int(total) != len(edited_pks):
+                print(
+                    f"  WARNING: TOTAL_FORMS={total} but "
+                    f"{len(edited_pks)} form-*-id keys in POST"
+                )
+
+        response = super().changelist_view(request, extra_context)
+
+        if request.method == "POST" and hasattr(response, "context_data"):
+            cl = response.context_data.get("cl")
+            if cl and getattr(cl, "formset", None):
+                fs = cl.formset
+                print("[FormItemAdmin] changelist formset after super()")
+                print(f"  is_valid: {fs.is_valid()}")
+                print(f"  non_form_errors: {list(fs.non_form_errors())}")
+                if fs.management_form.errors:
+                    print(f"  management_form errors: {fs.management_form.errors}")
+                for i, form in enumerate(fs.forms):
+                    if form.errors:
+                        print(
+                            f"  form[{i}] pk={form.instance.pk} "
+                            f"errors={dict(form.errors)}"
+                        )
+                if not fs.is_valid():
+                    print("  (no per-form errors above => check management form / TOTAL_FORMS mismatch)")
+            print("=" * 60 + "\n")
+
+        return response
 
 
 @admin.register(ServiceForm)
@@ -515,7 +563,7 @@ class IndividualServiceAdmin(SummernoteModelAdmin):
         "order_protection_value",
         "sort_order",
     )
-    list_editable = ("sort_order",)
+ 
     search_fields = ("title", "service_id")
     list_filter = ("order_protection_type", "order_protection_disabled")
     ordering = ("sort_order",)
@@ -549,7 +597,7 @@ class IndividualServiceAdmin(SummernoteModelAdmin):
 @admin.register(ServiceCategory)
 class ServiceCategoryAdmin(admin.ModelAdmin):
     list_display = ("title", "description", "sort_order")
-    list_editable = ("sort_order",)
+
     filter_horizontal = ("services",)
     search_fields = ("title",)
     ordering = ("sort_order",)
@@ -612,7 +660,7 @@ class DiscountLevelAdmin(admin.ModelAdmin):
 @admin.register(CheckDiscloure)
 class CheckDiscloureAdmin(admin.ModelAdmin):
     list_display = ("name", "required", "sort_order", "active_flag")
-    list_editable = ("sort_order", "active_flag", "required")
+    list_editable = ( "active_flag", "required")
     search_fields = ("name", "message")
     list_filter = ("active_flag", "required")
     ordering = ("sort_order",)
