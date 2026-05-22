@@ -28,6 +28,7 @@ from .utils import (
     create_stripe_customer, create_stripe_session, get_coupon_by_promo_code,
     create_stripe_setup_intent,
     create_payment_intent,
+    NotaryFulfillmentError,
     generate_order_line_items,
     list_payment_methods,attach_payment_method,
     set_default_payment_method, get_coupon,
@@ -338,6 +339,16 @@ class FormSubmissionAPIView(APIView):
                     "error": e.user_message,
                     "order_id": order.id 
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            except NotaryFulfillmentError as e:
+                print(f"Notary fulfillment after payment: {e}")
+                import traceback
+                traceback.print_exc()
+                return Response({
+                    "message": "Payment succeeded but order fulfillment failed. Contact support to get your order completed.",
+                    "error": str(e),
+                    "order_id": order.id,
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             except Exception as e:
                 print(f"Direct payment failed: {e}")

@@ -32,6 +32,10 @@ except Exception as e:
 # ================================
 
 
+class NotaryFulfillmentError(Exception):
+    """Stripe payment succeeded but NotaryDash order creation failed."""
+
+
 def create_stripe_customer(company_name, email=None, metadata=None):
     """
     Creates a Stripe customer.
@@ -900,6 +904,63 @@ def payment_intent_from_paid_invoice(invoice):
     return resolved[-1][1]
 
 
+def _client_user_dict_for_order(order: Order) -> dict:
+    try:
+        uid = int(str(order.user_id)) if order.user_id not in (None, "") else None
+    except (TypeError, ValueError):
+        uid = None
+    if uid is None:
+        return {}
+    nu = NotaryUser.objects.filter(pk=uid).first()
+    if not nu:
+        return {}
+    return {
+        "id": nu.pk,
+        "email": nu.email or "",
+        "name": nu.name or "",
+        "first_name": nu.first_name or "",
+        "last_name": nu.last_name or "",
+        "attr": nu.attr if isinstance(nu.attr, dict) else {},
+    }
+
+
+def _fulfill_notary_order_after_invoice_pay(order: Order, payment_intent) -> None:
+    """
+    Create NotaryDash product/order and patch the paid Stripe invoice description.
+    Only call after Invoice.pay succeeds.
+    """
+    from .views import build_notary_order, _ghl_invoice_items_and_notary_product_names
+
+    if getattr(order, "notary_order_id", None):
+        return
+
+    client_user = _client_user_dict_for_order(order)
+    _, notary_product_names = _ghl_invoice_items_and_notary_product_names(order, {})
+    event_obj = {
+        "object": "payment_intent",
+        "id": payment_intent.id,
+        "amount": getattr(payment_intent, "amount", None) or 0,
+    }
+
+    notary_order = build_notary_order(order, notary_product_names, client_user, event_obj)
+    if not notary_order:
+        raise NotaryFulfillmentError(
+            f"Payment captured for order {order.id} but NotaryDash fulfillment failed."
+        )
+
+    if order.notary_order_id and order.invoice_id:
+        try:
+            stripe.Invoice.modify(
+                order.invoice_id,
+                description=stripe_invoice_description_for_order(order),
+            )
+        except Exception as e:
+            print(
+                f"⚠️ Paid invoice {order.invoice_id} not updated with notary id "
+                f"(order {order.id}): {e}"
+            )
+
+
 def create_payment_intent(
     amount,
     currency,
@@ -912,7 +973,7 @@ def create_payment_intent(
     """
     Creates and confirms a PaymentIntent for a specific payment method (saved card)
     by routing directly through a Stripe Invoice to avoid transaction duplication.
-    It builds the downstream NotaryDash order beforehand if an order is provided.
+    NotaryDash fulfillment runs only after Invoice.pay succeeds.
     """
     final_metadata = metadata or {}
 
@@ -950,58 +1011,6 @@ def create_payment_intent(
             print(f"⚠️ Could not create draft Stripe invoice for order {order.id}: {e}")
             return None, None
 
-        # 2. Pre-build NotaryDash order BEFORE capturing funds
-        try:
-            from .views import (
-                build_notary_order,
-                _ghl_invoice_items_and_notary_product_names,
-            )
-
-            client_user: dict = {}
-            try:
-                uid = (
-                    int(str(order.user_id)) if order.user_id not in (None, "") else None
-                )
-            except (TypeError, ValueError):
-                uid = None
-            if uid is not None:
-                nu = NotaryUser.objects.filter(pk=uid).first()
-                if nu:
-                    client_user = {
-                        "id": nu.pk,
-                        "email": nu.email or "",
-                        "name": nu.name or "",
-                        "first_name": nu.first_name or "",
-                        "last_name": nu.last_name or "",
-                        "attr": nu.attr if isinstance(nu.attr, dict) else {},
-                    }
-
-            _, notary_product_names = _ghl_invoice_items_and_notary_product_names(
-                order, {}
-            )
-
-            notary_order = build_notary_order(
-                order, notary_product_names, client_user, {}
-            )
-
-            if not notary_order:
-                raise Exception("Failed to generate Notary Order. Aborting payment.")
-
-            # Update draft invoice with Notary Order ID since we now have it
-            if order.notary_order_id:
-                stripe.Invoice.modify(
-                    draft_inv.id,
-                    description=stripe_invoice_description_for_order(order),
-                )
-
-        except Exception as e:
-            print(f"❌ Error compiling downstream Notary order: {e}")
-            # Ensure invoice stays draft / voided
-            void_draft_stripe_invoice_if_any(draft_inv.id)
-            order.invoice_id = None
-            order.save(update_fields=["invoice_id"])
-            raise e
-
     try:
         # Instead of raw PaymentIntent create, let the invoice natively
         # auto-generate the PaymentIntent & execute the charge
@@ -1023,6 +1032,18 @@ def create_payment_intent(
                 )
             # Apply metadata
             stripe.PaymentIntent.modify(intent.id, metadata=final_metadata)
+
+            if order:
+                try:
+                    _fulfill_notary_order_after_invoice_pay(order, intent)
+                except NotaryFulfillmentError:
+                    raise
+                except Exception as e:
+                    print(f"❌ NotaryDash fulfillment after payment: {e}")
+                    raise NotaryFulfillmentError(
+                        f"Payment captured for order {order.id} but NotaryDash "
+                        f"fulfillment failed: {e}"
+                    ) from e
 
         else:
             # Fallback for generic payments entirely devoid of generic Orders
