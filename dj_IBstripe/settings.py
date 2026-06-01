@@ -14,6 +14,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from decouple import config
 from celery.schedules import crontab
+from corsheaders.defaults import default_headers
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -54,15 +55,70 @@ else:
 
 TYPEFORM_ACCESS_TOKEN = config('TYPEFORM_ACCESS_TOKEN', default=None)
 TOLT_KEY = config('TOLT_KEY', default=None)
+FRAMER_WEBHOOK_SECRET = config('FRAMER_WEBHOOK_SECRET', default='')
 
 KEAP_SOCKET_PATH = config('KEAP_SOCKET_PATH', default='/home/ubuntu/keap-notary-sync/keap.sock')
 KEAP_HTTP_URL = config('KEAP_HTTP_URL', default='http://localhost:5000')
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', 'eeb6ba23cd77.ngrok-free.app', 'localhost:8000']
+ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', 'e5d9-2a09-bac5-4041-11cd-00-1c6-12.ngrok-free.app', 'localhost:8000']
 
-CORS_ALLOWED_ORIGINS = ['http://localhost:3000','http://localhost:5173','https://go.investorbootz.com']
+CORS_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:5173', 'https://go.investorbootz.com']
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r'^https://[\w-]+\.framer\.app$',
+    r'^https://[\w-]+\.framer\.website$',
+    r'^https://[\w-]+\.framercanvas\.com$',
+    r'^https://[\w-]+\.framer\.app$',
+    r'^https://[\w-]+\.framer\.com$',
+]
+
+
+def _parse_cors_extra(value: str):
+    """
+  Parse CORS_EXTRA_ORIGINS entries:
+    - https://example.com          -> exact origin
+    - *.framer.app                 -> subdomain regex (https only)
+    - regex:^https://.*\\.foo\\.com$  -> raw regex (prefix required)
+    """
+    origins = []
+    regexes = []
+    for raw in value.split(','):
+        entry = raw.strip().strip("'\"")
+        if not entry:
+            continue
+        if entry.startswith('regex:'):
+            regexes.append(entry[6:].strip())
+            continue
+        if entry.startswith('http://') or entry.startswith('https://'):
+            origins.append(entry)
+            continue
+        if entry.startswith('*.'):
+            domain = entry[2:].replace('.', r'\.')
+            regexes.append(rf'^https://[\w-]+\.{domain}$')
+            continue
+        if '*' in entry:
+            escaped = entry.replace('.', r'\.').replace('*', r'[\w-]+')
+            regexes.append(rf'^https://{escaped}$')
+    return origins, regexes
+
+
+_extra_cors = config('CORS_EXTRA_ORIGINS', default='')
+if _extra_cors:
+    _extra_origins, _extra_regexes = _parse_cors_extra(_extra_cors)
+    CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + _extra_origins
+    CORS_ALLOWED_ORIGIN_REGEXES = list(CORS_ALLOWED_ORIGIN_REGEXES) + _extra_regexes
+
+# Optional: allow all origins in local/ngrok dev (set CORS_ALLOW_ALL=true in .env).
+CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL', default=False, cast=bool)
+
+# Comma-separated extra allowed headers for CORS preflight (dev-only, e.g. ngrok-skip-browser-warning).
+CORS_ALLOW_HEADERS = list(default_headers)
+_extra_cors_headers = config('CORS_EXTRA_ALLOW_HEADERS', default='')
+if _extra_cors_headers:
+    CORS_ALLOW_HEADERS = CORS_ALLOW_HEADERS + [
+        h.strip().lower() for h in _extra_cors_headers.split(',') if h.strip()
+    ]
 
 CSRF_TRUSTED_ORIGINS = ['http://localhost:3000','http://localhost:5173','https://go.investorbootz.com']
 
@@ -100,8 +156,8 @@ INSTALLED_APPS = [
 OAUTH2_PROVIDER_APPLICATION_MODEL = 'oauth2_provider.Application'
 
 MIDDLEWARE = [
-    'oauth2_provider.middleware.OAuth2TokenMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    'oauth2_provider.middleware.OAuth2TokenMiddleware',
     'allauth.account.middleware.AccountMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

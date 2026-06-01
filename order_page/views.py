@@ -1,4 +1,10 @@
 # views.py
+import hmac
+import hashlib
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.shortcuts import get_object_or_404
 
 from rest_framework.response import Response
@@ -22,6 +28,63 @@ from stripe_payment.models import NotaryClientCompany, NotaryUser
 from stripe_payment.utils import create_stripe_customer
 from django.core.cache import cache
 from .services import GoogleService
+
+
+def validate_framer_registration_email(email):
+    """
+    Validate email for Framer signup (format + NotaryUser duplication).
+    Returns dict with valid, hasError, code, message for Framer override components.
+    """
+    normalized = (email or "").strip()
+    if not normalized:
+        return {
+            "valid": False,
+            "hasError": True,
+            "code": "required",
+            "message": "Email is required",
+        }
+
+    try:
+        validate_email(normalized)
+    except ValidationError:
+        return {
+            "valid": False,
+            "hasError": True,
+            "code": "invalid_format",
+            "message": "Please enter a valid email address",
+        }
+
+    is_registered = NotaryUser.objects.filter(
+        email__iexact=normalized,
+        deleted_at__isnull=True,
+    ).exists()
+    if is_registered:
+        return {
+            "valid": False,
+            "hasError": True,
+            "code": "duplicate",
+            "message": "Email already registered",
+        }
+
+    return {
+        "valid": True,
+        "hasError": False,
+        "code": "ok",
+        "message": "",
+    }
+
+
+def is_framer_webhook_signature_valid(secret, submission_id, payload, signature):
+    """Verify Framer-Signature per Framer webhook docs (HMAC-SHA256 over body + submission id)."""
+    if len(signature) != 71 or not signature.startswith('sha256='):
+        return False
+    if not submission_id:
+        return False
+    payload_hmac = hmac.new(secret.encode('utf-8'), digestmod=hashlib.sha256)
+    payload_hmac.update(payload)
+    payload_hmac.update(submission_id.encode('utf-8'))
+    expected_signature = 'sha256=' + payload_hmac.hexdigest()
+    return hmac.compare_digest(signature.encode('utf-8'), expected_signature.encode('utf-8'))
 
 
 def ensure_notary_client_company_local(company_id):
@@ -132,6 +195,71 @@ class TypeFormWebhook(APIView):
                 print("Typeform Webhook Error:", e)
                 return JsonResponse({"error": str(e)}, status=400)
 
+
+@method_decorator(csrf_exempt, name='dispatch')
+class FramerWebhookView(APIView):
+    """
+    Receives Framer form submissions (JSON POST).
+    Verifies Framer-Signature when FRAMER_WEBHOOK_SECRET is configured.
+    """
+
+    authentication_classes = []
+    parser_classes = []  # keep raw body intact for HMAC (do not use request.data)
+
+    def post(self, request):
+        body = request.body
+        signature = request.headers.get('Framer-Signature', '')
+        submission_id = request.headers.get('Framer-Webhook-Submission-Id', '')
+        print(f"Framer webhook signature: {signature}")
+        secret = getattr(settings, 'FRAMER_WEBHOOK_SECRET', '') or ''
+        if secret and signature and submission_id:
+            if not is_framer_webhook_signature_valid(secret, submission_id, body, signature):
+                print("Framer webhook: invalid signature")
+                return Response(
+                    {'error': 'Invalid signature'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+        else:
+            print("Framer webhook: FRAMER_WEBHOOK_SECRET not set, skipping signature verification")
+
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return Response({'error': 'Invalid JSON payload'}, status=status.HTTP_400_BAD_REQUEST)
+
+        print(f"Framer webhook submission_id={submission_id}")
+        print(f"Framer webhook payload:\n{json.dumps(payload, indent=2)}")
+
+        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+
+@method_decorator(csrf_exempt, name='dispatch')
+class FramerEmailValidationView(APIView):
+    """
+    Validates registration email for Framer form overrides (onBlur).
+
+    GET:  /framer/validate-email/?email=user@example.com  (no request body)
+    POST: JSON body { "email": "user@example.com" }
+    """
+
+    authentication_classes = []
+
+    @staticmethod
+    def _email_from_request(request):
+
+        if request.method == "GET":
+            return request.query_params.get("email")
+
+        return request.data.get("email")
+
+    def get(self, request):
+        return self._validate(request)
+
+    def post(self, request):
+        return self._validate(request)
+
+    def _validate(self, request):
+        result = validate_framer_registration_email(self._email_from_request(request))
+        return Response(result, status=status.HTTP_200_OK)
 
 
 class NotaryCreationView(APIView):
