@@ -571,7 +571,12 @@ def _post_to_notarydash(order, product_names):
     final_price = float(order.total_price or 0) + float(order.order_protection_price or 0)
 
     # ── Render HTML for NotaryDash instructions (no invoice_data needed) ──
-    order_status_emails_list = order.order_status_emails.split('\n') if order.order_status_emails else []
+    from stripe_payment.utils import (
+        order_status_emails_list_from_order,
+        notary_participants_from_order,
+    )
+
+    order_status_emails_list = order_status_emails_list_from_order(order)
 
     html_content = render_to_string(
         "order_product_detail.html",
@@ -658,6 +663,10 @@ def _post_to_notarydash(order, product_names):
 
     if formatted_datetime != "TBD":
         notary_order["location"]["appt_time"] = formatted_datetime
+
+    participants = notary_participants_from_order(order)
+    if participants:
+        notary_order["participants"] = participants
 
     if order.cosigner_first_name and order.cosigner_last_name:
         notary_order["cosigner"] = {

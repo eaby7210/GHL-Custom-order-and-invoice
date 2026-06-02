@@ -262,16 +262,32 @@ class ToltService:
 
     
     @staticmethod
-    def fetch_links(start_after=None, end_before=None, per_page: int = 100) -> Any:
+    def fetch_links(
+        start_after=None,
+        end_before=None,
+        per_page: int = 100,
+        *,
+        program_id: str | None = None,
+        partner_id: str | None = None,
+        param: str | None = None,
+        value: str | None = None,
+    ) -> Any:
         url = f"{ToltService.BASE_URL}/v1/links"
-        params = { "limit": per_page,
-                  "program_id": ToltService.PROGRAM_ID
-                  }
+        params: dict[str, Any] = {
+            "limit": per_page,
+            "program_id": program_id or ToltService.PROGRAM_ID,
+        }
         if start_after:
-            params["start_after"] = start_after
+            params["starting_after"] = start_after
         if end_before:
-            params["end_before"] = end_before
-            
+            params["ending_before"] = end_before
+        if partner_id:
+            params["partner_id"] = partner_id
+        if param:
+            params["param"] = param
+        if value:
+            params["value"] = value
+
         response = requests.get(url, headers=ToltService.get_headers(), params=params)
         response.raise_for_status()
         return response.json()

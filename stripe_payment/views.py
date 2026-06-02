@@ -38,6 +38,8 @@ from .utils import (
     apply_stripe_invoice_discount_cents,
     retrieve_invoice,
     stripe_invoice_description_for_order,
+    order_status_emails_list_from_order,
+    notary_participants_from_order,
 )
 from .services import InvoiceServices, NotaryDashServices
 from .serializer import OrderSerializer
@@ -1695,9 +1697,7 @@ def build_notary_order(order: Order, prd_name, client_user, event_obj):
             "order":order
             }
         ).replace("\n", "").replace('"', "'")
-    order_status_emails_list = []
-    if order.order_status_emails:
-        order_status_emails_list = order.order_status_emails.split('\n')
+    order_status_emails_list = order_status_emails_list_from_order(order)
 
     order_html_content = render_to_string(
         "order_detail.html", 
@@ -1782,6 +1782,9 @@ def build_notary_order(order: Order, prd_name, client_user, event_obj):
     if formatted_datetime!= "TBD":
         print(formatted_datetime)
         notary_order['location']['appt_time'] = formatted_datetime
+    participants = notary_participants_from_order(order)
+    if participants:
+        notary_order["participants"] = participants
     if order.cosigner_first_name and order.cosigner_last_name:
         notary_order["cosigner"] = {
             "first_name": order.cosigner_first_name if order.cosigner_first_name else "",

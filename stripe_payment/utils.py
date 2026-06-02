@@ -225,15 +225,35 @@ def _html_to_stripe_footer(html_fragment):
     return _truncate_stripe_invoice_footer(plain)
 
 
+def order_status_emails_list_from_order(order: Order) -> List[str]:
+    """
+    Parse ``order.order_status_emails`` (newline-separated) for templates and
+    NotaryDash — same source as ``order_detail.html`` participants block.
+    """
+    raw = getattr(order, "order_status_emails", None) or ""
+    if not raw:
+        return []
+    return [email for email in (line.strip() for line in raw.split("\n")) if email]
+
+
+def notary_participants_from_order(order: Order) -> List[dict]:
+    """NotaryDash ``participants`` payload from order status update emails."""
+    seen = set()
+    participants: List[dict] = []
+    for email in order_status_emails_list_from_order(order):
+        if email in seen:
+            continue
+        seen.add(email)
+        participants.append({"email": email, "permission": None})
+    return participants
+
+
 def stripe_invoice_footer_for_order(order: Order) -> str:
     """
     Plain-text Stripe Invoice.footer from the same templates as
     management/commands/test_stripe_invoice.py (not HTML).
     """
-    order_status_emails_list = []
-    raw_emails = getattr(order, "order_status_emails", None) or ""
-    if raw_emails:
-        order_status_emails_list = raw_emails.split("\n")
+    order_status_emails_list = order_status_emails_list_from_order(order)
     ctx = {"order": order, "order_status_emails_list": order_status_emails_list}
     footer = None
     try:

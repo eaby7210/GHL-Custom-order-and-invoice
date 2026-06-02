@@ -27,6 +27,8 @@ from stripe_payment.services import NotaryDashServices
 from stripe_payment.models import NotaryClientCompany, NotaryUser
 from stripe_payment.utils import create_stripe_customer
 from django.core.cache import cache
+from tolt.models import Link, Partner
+from tolt.services import ToltService
 from .services import GoogleService
 
 
@@ -133,6 +135,226 @@ def ensure_notary_client_company_local(company_id):
     return client_obj, None
 
 
+def _framer_payload_get(payload, *keys):
+    """Read a Framer form field (case-insensitive key match)."""
+    if not isinstance(payload, dict):
+        return None
+    lower_map = {
+        str(k).lower(): v for k, v in payload.items() if isinstance(k, str)
+    }
+    for key in keys:
+        val = lower_map.get(key.lower())
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return None
+
+
+def _split_full_name(name):
+    parts = (name or "").split(None, 1)
+    first = parts[0] if parts else ""
+    last = parts[1] if len(parts) > 1 else ""
+    return first, last
+
+
+def resolve_tolt_partner_from_ref(ref_token):
+    """
+    Resolve Tolt Partner from a ref tracking value (local Link DB, then Tolt API).
+    """
+    token = (ref_token or "").strip()
+    if not token:
+        return None
+
+    qs = (
+        Link.objects.filter(partner__isnull=False)
+        .exclude(value__isnull=True)
+        .exclude(value="")
+        .select_related("partner")
+        .order_by("-created_at")
+    )
+    link = (
+        qs.filter(value=token).first()
+        or qs.filter(value__iexact=token).first()
+        or qs.filter(value__icontains=token).first()
+    )
+    if link and link.partner:
+        print(f"[Framer] Partner from local Link {link.id} (ref={token})")
+        return link.partner
+
+    try:
+        response = ToltService.fetch_links(param="ref", value=token, per_page=10)
+        for link_data in response.get("data") or []:
+            link_value = (link_data.get("value") or "").strip()
+            if link_value.lower() != token.lower():
+                continue
+            link_obj, _ = Link.create_or_update_from_api(link_data)
+            if link_obj.partner:
+                print(f"[Framer] Partner from Tolt API link {link_obj.id} (ref={token})")
+                return link_obj.partner
+
+            partner_id = link_data.get("partner_id")
+            if not partner_id:
+                continue
+
+            partner = Partner.objects.filter(id=partner_id).first()
+            if not partner:
+                partner_resp = ToltService.fetch_partner(partner_id)
+                partner_payload = partner_resp.get("data") if partner_resp.get("success") else partner_resp
+                if isinstance(partner_payload, dict) and partner_payload.get("id"):
+                    partner, _ = Partner.create_or_update_from_api(partner_payload)
+
+            if partner:
+                link_obj.partner = partner
+                link_obj.save(update_fields=["partner"])
+                print(f"[Framer] Partner synced from Tolt API (ref={token}, partner={partner.id})")
+                return partner
+    except Exception as exc:
+        print(f"[Framer] Tolt link lookup failed for ref={token}: {exc}")
+
+    print(f"[Framer] No Tolt partner found for ref={token}")
+    return None
+
+
+def create_notary_user_from_registration_form(
+    *,
+    email,
+    company,
+    first_name,
+    last_name,
+    phone=None,
+    ref=None,
+):
+    """
+    Create NotaryDash client + user and persist locally (Framer / direct signup).
+    Returns (payload_dict, http_status).
+    """
+    email = (email or "").strip()
+    if not email:
+        return {"message": "Missing email"}, status.HTTP_400_BAD_REQUEST
+
+    email_check = validate_framer_registration_email(email)
+    if not email_check["valid"]:
+        return {"message": email_check["message"]}, status.HTTP_400_BAD_REQUEST
+
+    company = (company or "").strip()
+    if not company:
+        return {"message": "Missing company"}, status.HTTP_400_BAD_REQUEST
+
+    partner = resolve_tolt_partner_from_ref(ref) if ref else None
+
+    client_payload = {"company_name": company}
+    client_user_payload = {
+        "user": {
+            "first_name": first_name or "",
+            "last_name": last_name or "",
+            "email": email,
+            "attr": {"phone": phone or ""},
+        },
+        "email_credentials": True,
+    }
+
+    client_obj = NotaryClientCompany.objects.filter(company_name=company).first()
+    if client_obj:
+        print(f"✅ Found existing NotaryClientCompany: {client_obj.company_name} (ID: {client_obj.id})")
+        client_id = client_obj.id
+    else:
+        client_response = NotaryDashServices.create_client(client_payload)
+        if not client_response:
+            return {"message": "Failed to create client"}, status.HTTP_400_BAD_REQUEST
+
+        client_data = client_response.get("data", {})
+        client_id = client_data.get("id")
+        if not client_id:
+            return {"message": "No client ID returned"}, status.HTTP_400_BAD_REQUEST
+
+        client_obj, _ = NotaryClientCompany.objects.update_or_create(
+            id=client_id,
+            defaults={
+                "owner_id": client_data.get("owner_id"),
+                "parent_company_id": client_data.get("parent_company_id"),
+                "type": client_data.get("type"),
+                "company_name": client_data.get("company_name"),
+                "parent_company_name": client_data.get("parent_company_name"),
+                "attr": client_data.get("attr", {}),
+                "address": client_data.get("address", {}),
+                "deleted_at": client_data.get("deleted_at"),
+                "created_at": client_data.get("created_at"),
+                "updated_at": client_data.get("updated_at"),
+                "active": client_data.get("active", True),
+            },
+        )
+        print(f"✅ Saved NotaryClientCompany: {client_obj}")
+
+    if not client_obj.stripe_customer_id:
+        stripe_customer = create_stripe_customer(client_obj.company_name, email=email)
+        if stripe_customer:
+            client_obj.stripe_customer_id = stripe_customer.id
+            client_obj.save()
+
+    user_response = NotaryDashServices.create_client_user(
+        client_id=client_id, user_data=client_user_payload
+    )
+    if not user_response:
+        return {"message": "Failed to create client user"}, status.HTTP_400_BAD_REQUEST
+
+    user_data = user_response.get("data", {})
+    user_id = user_data.get("id")
+    last_company_id = user_data.get("last_company_id")
+    company_id = last_company_id if last_company_id else client_id
+
+    if not user_id:
+        return {"message": "User creation failed"}, status.HTTP_400_BAD_REQUEST
+
+    _, sync_err = ensure_notary_client_company_local(company_id)
+    if sync_err:
+        return {"message": sync_err}, status.HTTP_502_BAD_GATEWAY
+
+    is_first_user = not NotaryUser.objects.filter(last_company_id=company_id).exists()
+    full_name = " ".join(p for p in (first_name, last_name) if p).strip()
+
+    user_defaults = {
+        "first_name": user_data.get("first_name") or first_name or "",
+        "last_name": user_data.get("last_name") or last_name or "",
+        "name": full_name or user_data.get("name") or email,
+        "email": user_data.get("email") or email,
+        "photo_url": user_data.get("photo_url"),
+        "country_code": user_data.get("country_code"),
+        "tz": user_data.get("tz"),
+        "attr": user_data.get("attr", {}),
+        "last_login_at": user_data.get("last_login_at"),
+        "last_ip": user_data.get("last_ip"),
+        "last_company_id": company_id,
+        "email_unverified": user_data.get("email_unverified"),
+        "disabled": user_data.get("disabled"),
+        "deleted_at": user_data.get("deleted_at"),
+        "created_at": user_data.get("created_at"),
+        "updated_at": user_data.get("updated_at"),
+        "type": user_data.get("type"),
+    }
+    if partner is not None:
+        user_defaults["partner_id"] = partner.id
+
+    user_obj, _ = NotaryUser.objects.update_or_create(id=user_id, defaults=user_defaults)
+
+    if is_first_user:
+        user_obj.is_admin = True
+        user_obj.save(update_fields=["is_admin"])
+
+    if user_obj.partner_id:
+        from .tasks import create_tolt_customer_for_notary_user
+        create_tolt_customer_for_notary_user.delay(user_obj.id)
+
+    print(f"✅ Saved NotaryUser from Framer: {user_obj}")
+
+    return (
+        {
+            "status": "ok",
+            "message": "Account Created",
+            "url": f"https://go.investorbootz.com/?company_id={company_id}&client_id={user_id}",
+        },
+        status.HTTP_201_CREATED,
+    )
+
+
 class LatestTermsOfConditionsView(APIView):
     """
     Returns the latest Terms of Conditions (by updated_at).
@@ -230,7 +452,29 @@ class FramerWebhookView(APIView):
         print(f"Framer webhook submission_id={submission_id}")
         print(f"Framer webhook payload:\n{json.dumps(payload, indent=2)}")
 
-        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+        email = _framer_payload_get(payload, "Email", "email")
+        company = _framer_payload_get(payload, "Company", "company")
+        name = _framer_payload_get(payload, "Name", "name")
+        phone = _framer_payload_get(payload, "Phone Number", "phone", "phone number")
+        ref = _framer_payload_get(payload, "ref")
+        first_name, last_name = _split_full_name(name)
+
+        try:
+            result, http_status = create_notary_user_from_registration_form(
+                email=email,
+                company=company,
+                first_name=first_name,
+                last_name=last_name,
+                phone=phone,
+                ref=ref,
+            )
+            return Response(result, status=http_status)
+        except Exception as exc:
+            print(f"Framer webhook processing error: {exc}")
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 @method_decorator(csrf_exempt, name='dispatch')
 class FramerEmailValidationView(APIView):
