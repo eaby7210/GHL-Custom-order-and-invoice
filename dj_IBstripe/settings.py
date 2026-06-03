@@ -64,7 +64,7 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', '102c-2a09-bac5-3b2f-8aa-00-dd-17.ngrok-free.app', 'localhost:8000']
 
-CORS_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:5173', 'https://go.investorbootz.com']
+CORS_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:5173', 'https://go.investorbootz.com', 'https://investorbootz.com']
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r'^https://[\w-]+\.framer\.app$',
     r'^https://[\w-]+\.framer\.website$',
