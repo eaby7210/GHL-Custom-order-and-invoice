@@ -136,8 +136,13 @@ class NotaryUserM2MViewSet(viewsets.ReadOnlyModelViewSet):
             "teams": [{"id": data.get("team_id")}] if data.get("team_id") else []
         }
 
-        user_response = NotaryDashServices.create_client_user(client_id, user_payload)
-        
+        user_response, user_error = NotaryDashServices.create_client_user(
+            client_id, user_payload
+        )
+
+        if user_error:
+            return Response(user_error, status=status.HTTP_400_BAD_REQUEST)
+
         if user_response and user_response.get("data"):
             user_data = user_response.get("data")
             user_id = user_data.get("id")

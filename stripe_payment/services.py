@@ -53,6 +53,78 @@ def request_with_retry(url, headers, params=None, max_retries=5, delay=30, timeo
     print("❌ Max retries exceeded for:", url)
     return None
 
+CREATE_CLIENT_USER_ERROR_MESSAGE = "Failed to create client user"
+
+
+def parse_notarydash_error_response(
+    response, *, default_message=CREATE_CLIENT_USER_ERROR_MESSAGE
+):
+    """
+    Build a client-facing payload from a NotaryDash 4xx/5xx response.
+
+    ``message`` always includes ``default_message``; field/API detail is appended
+    when present and exposed under ``errors``.
+    """
+    body = None
+    if response is not None:
+        try:
+            body = response.json()
+        except (ValueError, AttributeError, TypeError):
+            text = (getattr(response, "text", None) or "").strip()
+            payload = {"message": default_message, "errors": {}}
+            if text:
+                payload["detail"] = text
+            return payload
+
+    if not isinstance(body, dict):
+        return {"message": default_message, "errors": {}}
+
+    errors = {}
+    nested = body.get("errors")
+    if isinstance(nested, dict):
+        for key, val in nested.items():
+            field = str(key)
+            if isinstance(val, list):
+                errors[field] = [str(item) for item in val if item is not None]
+            elif val is not None:
+                errors[field] = [str(val)]
+    else:
+        for key, val in body.items():
+            if key in ("message", "success", "error", "data"):
+                continue
+            field = str(key)
+            if isinstance(val, list):
+                errors[field] = [str(item) for item in val if item is not None]
+            elif val is not None:
+                errors[field] = [str(val)]
+
+    parts = []
+    for field, msgs in errors.items():
+        label = field.split(".")[-1].replace("_", " ").strip().title() or field
+        for msg in msgs:
+            text = str(msg)
+            parts.append(
+                text if label.lower() in text.lower() else f"{label}: {text}"
+            )
+
+    api_message = body.get("message") or body.get("error")
+    if parts:
+        detail = parts[0] if len(parts) == 1 else "; ".join(parts)
+        message = f"{default_message}. {detail}"
+    elif api_message and str(api_message).strip():
+        api_message = str(api_message).strip()
+        message = (
+            api_message
+            if api_message == default_message
+            or api_message.startswith(default_message)
+            else f"{default_message}. {api_message}"
+        )
+    else:
+        message = default_message
+
+    return {"message": message, "errors": errors}
+
+
 def post_with_retry(url, headers, json_data=None, max_retries=5, delay=30, timeout=DEFAULT_TIMEOUT):
     """
     Performs POST request with automatic retry on status 429 and network errors.
@@ -377,7 +449,8 @@ class NotaryDashServices:
                 }
 
         Returns:
-            dict | None
+            (success_json, error_payload) — exactly one of the tuple values is None.
+            error_payload has ``message`` and optional ``errors`` field map.
         """
         url = f"{BASE_URL}/api/v2/clients/{client_id}/users"
         headers = {
@@ -391,11 +464,19 @@ class NotaryDashServices:
 
             if response and 200 <= response.status_code < 300:
                 print("✅ Client user created successfully.")
-                return response.json()
-            
-            print(f"❌ Failed to create client user: {response.status_code if response else 'No Response'} - {response.text if response else ''}")
-            return None
+                return response.json(), None
+
+            print(
+                f"❌ Failed to create client user: "
+                f"{response.status_code if response else 'No Response'} - "
+                f"{response.text if response else ''}"
+            )
+            return None, parse_notarydash_error_response(
+                response, default_message=CREATE_CLIENT_USER_ERROR_MESSAGE
+            )
         except Exception as e:
-            # post_with_retry catches RequestException, so this might catch other unexpected errors
             print(f"❌ Exception creating client user: {e}")
-            return None
+            return None, {
+                "message": CREATE_CLIENT_USER_ERROR_MESSAGE,
+                "errors": {},
+            }

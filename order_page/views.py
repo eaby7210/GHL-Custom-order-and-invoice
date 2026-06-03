@@ -149,11 +149,44 @@ def _framer_payload_get(payload, *keys):
     return None
 
 
+def _strip_field(value):
+    """Strip whitespace; empty strings become None."""
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    return stripped if stripped else None
+
+
 def _split_full_name(name):
-    parts = (name or "").split(None, 1)
-    first = parts[0] if parts else ""
-    last = parts[1] if len(parts) > 1 else ""
+    full = (name or "").strip()
+    if not full:
+        return "", ""
+    parts = full.split(None, 1)
+    first = parts[0].strip() if parts else ""
+    last = parts[1].strip() if len(parts) > 1 else ""
     return first, last
+
+
+def normalize_registration_fields(fields):
+    """Strip and normalize registration input before NotaryDash API calls."""
+    email = _strip_field(fields.get("email"))
+    if email:
+        email = email.lower()
+
+    first_name = _strip_field(fields.get("first_name")) or ""
+    last_name = _strip_field(fields.get("last_name")) or ""
+    company = _strip_field(fields.get("company")) or ""
+    phone = _strip_field(fields.get("phone"))
+    ref = _strip_field(fields.get("ref"))
+
+    return {
+        "email": email,
+        "company": company,
+        "first_name": first_name,
+        "last_name": last_name,
+        "phone": phone,
+        "ref": ref,
+    }
 
 
 def _framer_payload_phone(payload):
@@ -163,7 +196,7 @@ def _framer_payload_phone(payload):
     """
     phone = _framer_payload_get(payload, "Phone Number", "phone", "phone number")
     if phone:
-        return phone
+        return _strip_field(phone)
     if not isinstance(payload, dict):
         return None
     for key, val in payload.items():
@@ -174,7 +207,7 @@ def _framer_payload_phone(payload):
             continue
         key_lower = key.lower()
         if "phone" in key_lower or any(c.isdigit() for c in key):
-            return candidate
+            return _strip_field(candidate)
     return None
 
 
@@ -182,15 +215,14 @@ def parse_framer_registration_payload(payload):
     """Extract registration fields from a Framer override / webhook JSON body."""
     name = _framer_payload_get(payload, "Name", "name")
     first_name, last_name = _split_full_name(name)
-    ref = _framer_payload_get(payload, "ref")
-    return {
+    return normalize_registration_fields({
         "email": _framer_payload_get(payload, "Email", "email", "email address"),
         "company": _framer_payload_get(payload, "Company", "company"),
         "first_name": first_name,
         "last_name": last_name,
         "phone": _framer_payload_phone(payload),
-        "ref": ref or None,
-    }
+        "ref": _framer_payload_get(payload, "ref"),
+    })
 
 
 def build_framer_registration_submit_response(result, http_status):
@@ -213,30 +245,32 @@ def build_framer_registration_submit_response(result, http_status):
         }, http_status
 
     msg = (result or {}).get("message", "Registration failed.")
-    return {
+    body = {
         "valid": False,
         "hasError": True,
         "code": "registration_failed",
         "message": msg,
         "registration": result,
-    }, http_status
+    }
+    if isinstance(result, dict) and result.get("errors"):
+        body["errors"] = result["errors"]
+    return body, http_status
 
 
 def framer_registration_email_from_request(request):
     """Email for validation: GET query param or POST body (DRF data or Framer JSON)."""
-    if request.method == "GET":
-        return request.query_params.get("email")
-
     email = None
-    if getattr(request, "data", None) and isinstance(request.data, dict):
+    if request.method == "GET":
+        email = request.query_params.get("email")
+    elif getattr(request, "data", None) and isinstance(request.data, dict):
         email = request.data.get("email")
-    if email:
-        return email
+    else:
+        payload = framer_parse_json_body(request)
+        if payload is not None:
+            email = _framer_payload_get(payload, "Email", "email")
 
-    payload = framer_parse_json_body(request)
-    if payload is None:
-        return None
-    return _framer_payload_get(payload, "Email", "email")
+    normalized = normalize_registration_fields({"email": email})
+    return normalized.get("email")
 
 
 def framer_parse_json_body(request):
@@ -369,7 +403,21 @@ def create_notary_user_from_registration_form(
     Create NotaryDash client + user and persist locally (Framer / direct signup).
     Returns (payload_dict, http_status).
     """
-    email = (email or "").strip()
+    normalized = normalize_registration_fields({
+        "email": email,
+        "company": company,
+        "first_name": first_name,
+        "last_name": last_name,
+        "phone": phone,
+        "ref": ref,
+    })
+    email = normalized["email"]
+    company = normalized["company"]
+    first_name = normalized["first_name"]
+    last_name = normalized["last_name"]
+    phone = normalized["phone"]
+    ref = normalized["ref"]
+
     if not email:
         return {"message": "Missing email"}, status.HTTP_400_BAD_REQUEST
 
@@ -377,7 +425,6 @@ def create_notary_user_from_registration_form(
     if not email_check["valid"]:
         return {"message": email_check["message"]}, status.HTTP_400_BAD_REQUEST
 
-    company = (company or "").strip()
     if not company:
         return {"message": "Missing company"}, status.HTTP_400_BAD_REQUEST
 
@@ -432,11 +479,11 @@ def create_notary_user_from_registration_form(
             client_obj.stripe_customer_id = stripe_customer.id
             client_obj.save()
 
-    user_response = NotaryDashServices.create_client_user(
+    user_response, user_error = NotaryDashServices.create_client_user(
         client_id=client_id, user_data=client_user_payload
     )
-    if not user_response:
-        return {"message": "Failed to create client user"}, status.HTTP_400_BAD_REQUEST
+    if user_error:
+        return user_error, status.HTTP_400_BAD_REQUEST
 
     user_data = user_response.get("data", {})
     user_id = user_data.get("id")
@@ -768,17 +815,25 @@ class NotaryCreationView(APIView):
                     f"using mapping partner_id={partner_id_from_mapping}"
                 )
 
+        typeform_fields = normalize_registration_fields({
+            "email": recent_response.get_answer_by_title("Email"),
+            "company": recent_response.get_answer_by_title("Company"),
+            "first_name": recent_response.get_answer_by_title("First name"),
+            "last_name": recent_response.get_answer_by_title("Last name"),
+            "phone": recent_response.get_answer_by_title("Phone number"),
+        })
+
         client_payload = {
-            "company_name": recent_response.get_answer_by_title("Company"),
+            "company_name": typeform_fields["company"],
         }
 
         client_user_payload = {
             "user": {
-                "first_name": recent_response.get_answer_by_title("First name"),
-                "last_name": recent_response.get_answer_by_title("Last name"),
-                "email": recent_response.get_answer_by_title("Email"),
+                "first_name": typeform_fields["first_name"],
+                "last_name": typeform_fields["last_name"],
+                "email": typeform_fields["email"],
                 "attr": {
-                    "phone": recent_response.get_answer_by_title("Phone number")
+                    "phone": typeform_fields["phone"] or "",
                 },
             },
             "email_credentials": True,
@@ -832,12 +887,12 @@ class NotaryCreationView(APIView):
 
 
         # 4️⃣ Create client user
-        user_response = NotaryDashServices.create_client_user(
+        user_response, user_error = NotaryDashServices.create_client_user(
             client_id=client_id, user_data=client_user_payload
         )
 
-        if not user_response:
-            return Response({"message": "Failed to create client user"}, status=status.HTTP_400_BAD_REQUEST)
+        if user_error:
+            return Response(user_error, status=status.HTTP_400_BAD_REQUEST)
 
         user_data = user_response.get("data", {})
         user_id = user_data.get("id")
