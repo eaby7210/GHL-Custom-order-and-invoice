@@ -156,6 +156,148 @@ def _split_full_name(name):
     return first, last
 
 
+def _framer_payload_phone(payload):
+    """
+    Phone from Framer override payload. Prefers ``Phone Number``; falls back to
+    extra inputs whose key looks like a phone mask (e.g. ``(123) 456-7890``).
+    """
+    phone = _framer_payload_get(payload, "Phone Number", "phone", "phone number")
+    if phone:
+        return phone
+    if not isinstance(payload, dict):
+        return None
+    for key, val in payload.items():
+        if not isinstance(key, str):
+            continue
+        candidate = str(val).strip() if val is not None else ""
+        if len(candidate) < 7 or sum(c.isdigit() for c in candidate) < 7:
+            continue
+        key_lower = key.lower()
+        if "phone" in key_lower or any(c.isdigit() for c in key):
+            return candidate
+    return None
+
+
+def parse_framer_registration_payload(payload):
+    """Extract registration fields from a Framer override / webhook JSON body."""
+    name = _framer_payload_get(payload, "Name", "name")
+    first_name, last_name = _split_full_name(name)
+    ref = _framer_payload_get(payload, "ref")
+    return {
+        "email": _framer_payload_get(payload, "Email", "email", "email address"),
+        "company": _framer_payload_get(payload, "Company", "company"),
+        "first_name": first_name,
+        "last_name": last_name,
+        "phone": _framer_payload_phone(payload),
+        "ref": ref or None,
+    }
+
+
+def build_framer_registration_submit_response(result, http_status):
+    """
+    Response JSON for Framer override fetch().
+
+    Expects ``redirect_url``, ``valid``, ``hasError``, and ``message`` at the top
+    level (see Framer ``submitAndValidate``).
+    """
+    if http_status == status.HTTP_201_CREATED:
+        redirect_url = result.get("url") or result.get("redirect_url")
+        return {
+            "valid": True,
+            "hasError": False,
+            "code": "ok",
+            "message": result.get("message", ""),
+            "redirect_url": redirect_url,
+            "url": redirect_url,
+            "registration": result,
+        }, http_status
+
+    msg = (result or {}).get("message", "Registration failed.")
+    return {
+        "valid": False,
+        "hasError": True,
+        "code": "registration_failed",
+        "message": msg,
+        "registration": result,
+    }, http_status
+
+
+def framer_registration_email_from_request(request):
+    """Email for validation: GET query param or POST body (DRF data or Framer JSON)."""
+    if request.method == "GET":
+        return request.query_params.get("email")
+
+    email = None
+    if getattr(request, "data", None) and isinstance(request.data, dict):
+        email = request.data.get("email")
+    if email:
+        return email
+
+    payload = framer_parse_json_body(request)
+    if payload is None:
+        return None
+    return _framer_payload_get(payload, "Email", "email")
+
+
+def framer_parse_json_body(request):
+    """Parse raw request body as JSON; None if empty or invalid."""
+    try:
+        body = request.body
+        return json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        return None
+
+
+def framer_registration_payload_from_request(request):
+    """
+    Registration JSON for Framer override fetch() calls (not the Framer webhook).
+    Uses DRF-parsed body when available, otherwise raw JSON.
+    """
+    if getattr(request, "data", None) and isinstance(request.data, dict):
+        return request.data
+    return framer_parse_json_body(request)
+
+
+def framer_verify_webhook_signature_or_none(request):
+    """
+    Verify Framer-Signature when secret + headers are present.
+    Returns a DRF Response on failure, or None to continue.
+    """
+    body = request.body
+    signature = request.headers.get("Framer-Signature", "")
+    submission_id = request.headers.get("Framer-Webhook-Submission-Id", "")
+    secret = getattr(settings, "FRAMER_WEBHOOK_SECRET", "") or ""
+    if secret and signature and submission_id:
+        if not is_framer_webhook_signature_valid(
+            secret, submission_id, body, signature
+        ):
+            print("Framer: invalid signature")
+            return Response(
+                {"error": "Invalid signature"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    elif not secret:
+        print(
+            "Framer: FRAMER_WEBHOOK_SECRET not set, "
+            "skipping signature verification"
+        )
+    return None
+
+
+def submit_framer_registration_from_payload(payload):
+    """
+    Validate email (Framer override shape), then NotaryDash + Tolt signup.
+    Returns (response_body, http_status) for FramerRegistrationSubmitView.
+    """
+    fields = parse_framer_registration_payload(payload)
+    email_check = validate_framer_registration_email(fields.get("email"))
+    if not email_check["valid"]:
+        return email_check, status.HTTP_200_OK
+
+    result, http_status = create_notary_user_from_registration_form(**fields)
+    return build_framer_registration_submit_response(result, http_status)
+
+
 def resolve_tolt_partner_from_ref(ref_token):
     """
     Resolve Tolt Partner from a ref tracking value (local Link DB, then Tolt API).
@@ -349,7 +491,7 @@ def create_notary_user_from_registration_form(
         {
             "status": "ok",
             "message": "Account Created",
-            "url": f"https://go.investorbootz.com/?company_id={company_id}&client_id={user_id}",
+            "url": f"https://go.investorbootz.com/thankyou?company_id={company_id}&client_id={user_id}",
         },
         status.HTTP_201_CREATED,
     )
@@ -429,44 +571,25 @@ class FramerWebhookView(APIView):
     parser_classes = []  # keep raw body intact for HMAC (do not use request.data)
 
     def post(self, request):
-        body = request.body
-        signature = request.headers.get('Framer-Signature', '')
-        submission_id = request.headers.get('Framer-Webhook-Submission-Id', '')
-        print(f"Framer webhook signature: {signature}")
-        secret = getattr(settings, 'FRAMER_WEBHOOK_SECRET', '') or ''
-        if secret and signature and submission_id:
-            if not is_framer_webhook_signature_valid(secret, submission_id, body, signature):
-                print("Framer webhook: invalid signature")
-                return Response(
-                    {'error': 'Invalid signature'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-        else:
-            print("Framer webhook: FRAMER_WEBHOOK_SECRET not set, skipping signature verification")
+        print(f"Framer webhook signature: {request.headers.get('Framer-Signature', '')}")
+        sig_err = framer_verify_webhook_signature_or_none(request)
+        if sig_err:
+            return sig_err
 
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            return Response({'error': 'Invalid JSON payload'}, status=status.HTTP_400_BAD_REQUEST)
+        payload = framer_parse_json_body(request)
+        if payload is None:
+            return Response(
+                {"error": "Invalid JSON payload"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        submission_id = request.headers.get("Framer-Webhook-Submission-Id", "")
         print(f"Framer webhook submission_id={submission_id}")
         print(f"Framer webhook payload:\n{json.dumps(payload, indent=2)}")
 
-        email = _framer_payload_get(payload, "Email", "email")
-        company = _framer_payload_get(payload, "Company", "company")
-        name = _framer_payload_get(payload, "Name", "name")
-        phone = _framer_payload_get(payload, "Phone Number", "phone", "phone number")
-        ref = _framer_payload_get(payload, "ref")
-        first_name, last_name = _split_full_name(name)
-
         try:
             result, http_status = create_notary_user_from_registration_form(
-                email=email,
-                company=company,
-                first_name=first_name,
-                last_name=last_name,
-                phone=phone,
-                ref=ref,
+                **parse_framer_registration_payload(payload)
             )
             return Response(result, status=http_status)
         except Exception as exc:
@@ -475,6 +598,7 @@ class FramerWebhookView(APIView):
                 {"error": str(exc)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
 
 @method_decorator(csrf_exempt, name='dispatch')
 class FramerEmailValidationView(APIView):
@@ -487,14 +611,6 @@ class FramerEmailValidationView(APIView):
 
     authentication_classes = []
 
-    @staticmethod
-    def _email_from_request(request):
-
-        if request.method == "GET":
-            return request.query_params.get("email")
-
-        return request.data.get("email")
-
     def get(self, request):
         return self._validate(request)
 
@@ -502,8 +618,60 @@ class FramerEmailValidationView(APIView):
         return self._validate(request)
 
     def _validate(self, request):
-        result = validate_framer_registration_email(self._email_from_request(request))
+        result = validate_framer_registration_email(
+            framer_registration_email_from_request(request)
+        )
         return Response(result, status=status.HTTP_200_OK)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class FramerRegistrationSubmitView(APIView):
+    """
+    POST from Framer custom override code (fetch), not the Framer webhook.
+
+    Accepts JSON like getFormData(): Name, Email, Phone Number, Company, ref,
+    plus optional duplicate phone keys from placeholders.
+
+    Responses for override ``submitAndValidate``:
+    - Invalid email: 200, ``valid: false``, ``hasError: true``, ``message``
+    - Success: 201, ``valid: true``, ``redirect_url`` (go.investorbootz.com URL)
+    - Registration error: 4xx, ``hasError: true``, top-level ``message``
+    """
+
+    authentication_classes = []
+
+    def post(self, request):
+        payload = framer_registration_payload_from_request(request)
+        if payload is None:
+            return Response(
+                {
+                    "valid": False,
+                    "hasError": True,
+                    "code": "invalid_json",
+                    "message": "Invalid JSON payload",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        print(
+            "Framer registration submit (override API): "
+            f"{json.dumps(parse_framer_registration_payload(payload), default=str)}"
+        )
+
+        try:
+            body, http_status = submit_framer_registration_from_payload(payload)
+            return Response(body, status=http_status)
+        except Exception as exc:
+            print(f"Framer registration submit error: {exc}")
+            return Response(
+                {
+                    "valid": False,
+                    "hasError": True,
+                    "code": "server_error",
+                    "message": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class NotaryCreationView(APIView):

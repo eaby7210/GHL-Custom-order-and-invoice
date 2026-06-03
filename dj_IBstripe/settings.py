@@ -62,7 +62,7 @@ KEAP_HTTP_URL = config('KEAP_HTTP_URL', default='http://localhost:5000')
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', 'e5d9-2a09-bac5-4041-11cd-00-1c6-12.ngrok-free.app', 'localhost:8000']
+ALLOWED_HOSTS = ['go.investorbootz.com','127.0.0.1','localhost', '102c-2a09-bac5-3b2f-8aa-00-dd-17.ngrok-free.app', 'localhost:8000']
 
 CORS_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:5173', 'https://go.investorbootz.com']
 CORS_ALLOWED_ORIGIN_REGEXES = [
