@@ -178,6 +178,10 @@ def normalize_registration_fields(fields):
     company = _strip_field(fields.get("company")) or ""
     phone = _strip_field(fields.get("phone"))
     ref = _strip_field(fields.get("ref"))
+    password = _strip_field(fields.get("password"))
+    password_confirmation = _strip_field(fields.get("password_confirmation"))
+    if password and not password_confirmation:
+        password_confirmation = password
 
     return {
         "email": email,
@@ -186,6 +190,42 @@ def normalize_registration_fields(fields):
         "last_name": last_name,
         "phone": phone,
         "ref": ref,
+        "password": password,
+        "password_confirmation": password_confirmation if password else None,
+    }
+
+
+def build_notary_client_user_payload(
+    *,
+    first_name,
+    last_name,
+    email,
+    phone=None,
+    password=None,
+    password_confirmation=None,
+):
+    """
+    NotaryDash POST /clients/{id}/users body.
+
+    When ``password`` is set: ``email_credentials`` is False and both password
+    fields are sent. Otherwise NotaryDash emails credentials to the user.
+    """
+    user = {
+        "first_name": first_name or "",
+        "last_name": last_name or "",
+        "email": email,
+        "attr": {"phone": phone or ""},
+    }
+    if password:
+        user["password"] = password
+        user["password_confirmation"] = password_confirmation or password
+        email_credentials = False
+    else:
+        email_credentials = True
+
+    return {
+        "user": user,
+        "email_credentials": email_credentials,
     }
 
 
@@ -213,8 +253,26 @@ def _framer_payload_phone(payload):
 
 def parse_framer_registration_payload(payload):
     """Extract registration fields from a Framer override / webhook JSON body."""
-    name = _framer_payload_get(payload, "Name", "name")
-    first_name, last_name = _split_full_name(name)
+    first_name = _framer_payload_get(
+        payload, "First Name", "first name", "first_name"
+    )
+    last_name = _framer_payload_get(
+        payload, "Last Name", "last name", "last_name"
+    )
+    if not first_name and not last_name:
+        first_name, last_name = _split_full_name(
+            _framer_payload_get(payload, "Name", "name")
+        )
+
+    password = _framer_payload_get(payload, "Password", "password")
+    password_confirmation = _framer_payload_get(
+        payload,
+        "Confirm Password",
+        "password confirmation",
+        "password_confirmation",
+        "confirm password",
+    )
+
     return normalize_registration_fields({
         "email": _framer_payload_get(payload, "Email", "email", "email address"),
         "company": _framer_payload_get(payload, "Company", "company"),
@@ -222,7 +280,21 @@ def parse_framer_registration_payload(payload):
         "last_name": last_name,
         "phone": _framer_payload_phone(payload),
         "ref": _framer_payload_get(payload, "ref"),
+        "password": password,
+        "password_confirmation": password_confirmation,
     })
+
+
+def framer_registration_fields_for_log(fields):
+    """Safe copy of parsed registration fields (no password values)."""
+    if not isinstance(fields, dict):
+        return fields
+    safe = dict(fields)
+    if safe.get("password"):
+        safe["password"] = "[redacted]"
+    if safe.get("password_confirmation"):
+        safe["password_confirmation"] = "[redacted]"
+    return safe
 
 
 def build_framer_registration_submit_response(result, http_status):
@@ -398,6 +470,8 @@ def create_notary_user_from_registration_form(
     last_name,
     phone=None,
     ref=None,
+    password=None,
+    password_confirmation=None,
 ):
     """
     Create NotaryDash client + user and persist locally (Framer / direct signup).
@@ -410,6 +484,8 @@ def create_notary_user_from_registration_form(
         "last_name": last_name,
         "phone": phone,
         "ref": ref,
+        "password": password,
+        "password_confirmation": password_confirmation,
     })
     email = normalized["email"]
     company = normalized["company"]
@@ -417,6 +493,8 @@ def create_notary_user_from_registration_form(
     last_name = normalized["last_name"]
     phone = normalized["phone"]
     ref = normalized["ref"]
+    password = normalized["password"]
+    password_confirmation = normalized["password_confirmation"]
 
     if not email:
         return {"message": "Missing email"}, status.HTTP_400_BAD_REQUEST
@@ -431,15 +509,14 @@ def create_notary_user_from_registration_form(
     partner = resolve_tolt_partner_from_ref(ref) if ref else None
 
     client_payload = {"company_name": company}
-    client_user_payload = {
-        "user": {
-            "first_name": first_name or "",
-            "last_name": last_name or "",
-            "email": email,
-            "attr": {"phone": phone or ""},
-        },
-        "email_credentials": True,
-    }
+    client_user_payload = build_notary_client_user_payload(
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        phone=phone,
+        password=password,
+        password_confirmation=password_confirmation,
+    )
 
     client_obj = NotaryClientCompany.objects.filter(company_name=company).first()
     if client_obj:
@@ -676,8 +753,11 @@ class FramerRegistrationSubmitView(APIView):
     """
     POST from Framer custom override code (fetch), not the Framer webhook.
 
-    Accepts JSON like getFormData(): Name, Email, Phone Number, Company, ref,
-    plus optional duplicate phone keys from placeholders.
+    Accepts JSON like getFormData(): First Name, Last Name (or Name), Email,
+    Phone Number, Company, Password, ref.
+
+    When Password is present, NotaryDash receives password +
+    password_confirmation and email_credentials is false.
 
     Responses for override ``submitAndValidate``:
     - Invalid email: 200, ``valid: false``, ``hasError: true``, ``message``
@@ -702,7 +782,7 @@ class FramerRegistrationSubmitView(APIView):
 
         print(
             "Framer registration submit (override API): "
-            f"{json.dumps(parse_framer_registration_payload(payload), default=str)}"
+            f"{json.dumps(framer_registration_fields_for_log(parse_framer_registration_payload(payload)), default=str)}"
         )
 
         try:
