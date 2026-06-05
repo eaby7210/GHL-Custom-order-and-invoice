@@ -1478,4 +1478,33 @@ class DiscountLevel(TimeStampedModel):
     def __str__(self):
         return f"{self.items} items → {self.percent} {"Enabled" if self.active_flag else "Disabled"}%"
 
+
+class FramerRegistrationSubmission(models.Model):
+    """Audit log for incoming Framer registration API / webhook payloads."""
+
+    SOURCE_OVERRIDE = "override"
+    SOURCE_WEBHOOK = "webhook"
+    SOURCE_CHOICES = (
+        (SOURCE_OVERRIDE, "Framer override API"),
+        (SOURCE_WEBHOOK, "Framer webhook"),
+    )
+
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, db_index=True)
+    framer_submission_id = models.CharField(max_length=128, blank=True, default="")
+    email = models.EmailField(null=True, blank=True, db_index=True)
+    raw_payload = models.JSONField(default=dict)
+    parsed_payload = models.JSONField(null=True, blank=True)
+    http_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_payload = models.JSONField(null=True, blank=True)
+    success = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "framer_registration_submission"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        label = self.email or "unknown"
+        return f"{self.get_source_display()} — {label} ({self.created_at:%Y-%m-%d %H:%M})"
+
         

@@ -11,8 +11,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import (
     TermsOfConditions, TypeformResponse, TypeformParser, TypeformAnswer,
-    ServiceVariance, NotaryClientCompany
-    )
+    ServiceVariance, NotaryClientCompany, FramerRegistrationSubmission,
+)
 from rest_framework.decorators import api_view
 from .serializers import TermsOfConditionsSerializer, ServiceVarianceSerializer
 from rest_framework import status
@@ -295,6 +295,55 @@ def framer_registration_fields_for_log(fields):
     if safe.get("password_confirmation"):
         safe["password_confirmation"] = "[redacted]"
     return safe
+
+
+def redact_framer_raw_payload(payload):
+    """Redact sensitive keys before persisting raw Framer JSON."""
+    if not isinstance(payload, dict):
+        return payload
+    safe = {}
+    for key, value in payload.items():
+        key_lower = str(key).lower()
+        if "password" in key_lower:
+            safe[key] = "[redacted]"
+        else:
+            safe[key] = value
+    return safe
+
+
+def record_framer_registration_submission(
+    *,
+    source,
+    raw_payload,
+    parsed_fields=None,
+    http_status=None,
+    response_payload=None,
+    framer_submission_id="",
+):
+    """Persist incoming Framer registration attempt (passwords redacted)."""
+    email = None
+    if isinstance(parsed_fields, dict):
+        email = parsed_fields.get("email")
+    if not email and isinstance(raw_payload, dict):
+        email = _framer_payload_get(raw_payload, "Email", "email")
+
+    success = http_status == status.HTTP_201_CREATED
+
+    try:
+        FramerRegistrationSubmission.objects.create(
+            source=source,
+            framer_submission_id=framer_submission_id or "",
+            email=email,
+            raw_payload=redact_framer_raw_payload(raw_payload or {}),
+            parsed_payload=framer_registration_fields_for_log(parsed_fields)
+            if parsed_fields
+            else None,
+            http_status=http_status,
+            response_payload=response_payload,
+            success=success,
+        )
+    except Exception as exc:
+        print(f"Failed to record Framer registration submission: {exc}")
 
 
 def build_framer_registration_submit_response(result, http_status):
@@ -711,13 +760,30 @@ class FramerWebhookView(APIView):
         print(f"Framer webhook submission_id={submission_id}")
         print(f"Framer webhook payload:\n{json.dumps(payload, indent=2)}")
 
+        parsed_fields = parse_framer_registration_payload(payload)
         try:
             result, http_status = create_notary_user_from_registration_form(
-                **parse_framer_registration_payload(payload)
+                **parsed_fields
+            )
+            record_framer_registration_submission(
+                source=FramerRegistrationSubmission.SOURCE_WEBHOOK,
+                raw_payload=payload,
+                parsed_fields=parsed_fields,
+                http_status=http_status,
+                response_payload=result,
+                framer_submission_id=submission_id,
             )
             return Response(result, status=http_status)
         except Exception as exc:
             print(f"Framer webhook processing error: {exc}")
+            record_framer_registration_submission(
+                source=FramerRegistrationSubmission.SOURCE_WEBHOOK,
+                raw_payload=payload,
+                parsed_fields=parsed_fields,
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                response_payload={"error": str(exc)},
+                framer_submission_id=submission_id,
+            )
             return Response(
                 {"error": str(exc)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -780,23 +846,39 @@ class FramerRegistrationSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        parsed_fields = parse_framer_registration_payload(payload)
         print(
             "Framer registration submit (override API): "
-            f"{json.dumps(framer_registration_fields_for_log(parse_framer_registration_payload(payload)), default=str)}"
+            f"{json.dumps(framer_registration_fields_for_log(parsed_fields), default=str)}"
         )
 
         try:
             body, http_status = submit_framer_registration_from_payload(payload)
+            record_framer_registration_submission(
+                source=FramerRegistrationSubmission.SOURCE_OVERRIDE,
+                raw_payload=payload,
+                parsed_fields=parsed_fields,
+                http_status=http_status,
+                response_payload=body,
+            )
             return Response(body, status=http_status)
         except Exception as exc:
             print(f"Framer registration submit error: {exc}")
+            error_body = {
+                "valid": False,
+                "hasError": True,
+                "code": "server_error",
+                "message": str(exc),
+            }
+            record_framer_registration_submission(
+                source=FramerRegistrationSubmission.SOURCE_OVERRIDE,
+                raw_payload=payload,
+                parsed_fields=parsed_fields,
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                response_payload=error_body,
+            )
             return Response(
-                {
-                    "valid": False,
-                    "hasError": True,
-                    "code": "server_error",
-                    "message": str(exc),
-                },
+                error_body,
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

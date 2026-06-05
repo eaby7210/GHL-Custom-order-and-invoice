@@ -19,7 +19,7 @@ from .models import (
 )
 from .forms import SubmenuItemForm
 from django.utils.html import format_html
-from .models import TypeformForm, TypeformField, TypeformPartnerMapping
+from .models import TypeformForm, TypeformField, TypeformPartnerMapping, FramerRegistrationSubmission
 from .services import TypeformService
 from django.contrib import messages
 
@@ -748,3 +748,33 @@ class TypeformPartnerMappingAdmin(admin.ModelAdmin):
         return form
 
 
+@admin.register(FramerRegistrationSubmission)
+class FramerRegistrationSubmissionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "email",
+        "source",
+        "success",
+        "http_status",
+        "framer_submission_id",
+        "created_at",
+    )
+    list_filter = ("source", "success", "http_status", "created_at")
+    search_fields = ("email", "framer_submission_id")
+    ordering = ("-created_at",)
+    actions = None
+
+    def get_readonly_fields(self, request, obj=None):
+        return [field.name for field in self.model._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        return True
