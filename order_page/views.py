@@ -572,7 +572,9 @@ def create_notary_user_from_registration_form(
         print(f"✅ Found existing NotaryClientCompany: {client_obj.company_name} (ID: {client_obj.id})")
         client_id = client_obj.id
     else:
-        client_response = NotaryDashServices.create_client(client_payload)
+        client_response = NotaryDashServices.create_client(
+            client_payload, retry_on_rate_limit=False
+        )
         if not client_response:
             return {"message": "Failed to create client"}, status.HTTP_400_BAD_REQUEST
 
@@ -606,10 +608,13 @@ def create_notary_user_from_registration_form(
             client_obj.save()
 
     user_response, user_error = NotaryDashServices.create_client_user(
-        client_id=client_id, user_data=client_user_payload
+        client_id=client_id,
+        user_data=client_user_payload,
+        retry_on_rate_limit=False,
     )
     if user_error:
-        return user_error, status.HTTP_400_BAD_REQUEST
+        http_status = user_error.get("status_code") or status.HTTP_400_BAD_REQUEST
+        return user_error, http_status
 
     user_data = user_response.get("data", {})
     user_id = user_data.get("id")

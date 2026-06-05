@@ -74,10 +74,15 @@ def parse_notarydash_error_response(
             payload = {"message": default_message, "errors": {}}
             if text:
                 payload["detail"] = text
+            if response is not None:
+                payload["status_code"] = response.status_code
             return payload
 
     if not isinstance(body, dict):
-        return {"message": default_message, "errors": {}}
+        payload = {"message": default_message, "errors": {}}
+        if response is not None:
+            payload["status_code"] = response.status_code
+        return payload
 
     errors = {}
     nested = body.get("errors")
@@ -122,20 +127,27 @@ def parse_notarydash_error_response(
     else:
         message = default_message
 
-    return {"message": message, "errors": errors}
+    payload = {"message": message, "errors": errors}
+    if response is not None:
+        payload["status_code"] = response.status_code
+    return payload
 
 
-def post_with_retry(url, headers, json_data=None, max_retries=5, delay=30, timeout=DEFAULT_TIMEOUT):
+def post_with_retry(
+    url,
+    headers,
+    json_data=None,
+    max_retries=5,
+    delay=30,
+    timeout=DEFAULT_TIMEOUT,
+    *,
+    retry_on_rate_limit=True,
+):
     """
-    Performs POST request with automatic retry on status 429 and network errors.
-    
-    Args:
-        url (str): Request URL
-        headers (dict): Request headers
-        json_data (dict): JSON payload
-        max_retries (int): Max retry attempts
-        delay (int/float): Initial delay between retries (seconds). Increases exponentially.
-        timeout (int/float): Request timeout (seconds)
+    Performs POST request with optional retry on status 429 and network errors.
+
+    When ``retry_on_rate_limit`` is False, 429 and network errors are returned
+    immediately (no sleep) — use for user-facing requests such as Framer signup.
     """
     attempt = 0
 
@@ -143,22 +155,25 @@ def post_with_retry(url, headers, json_data=None, max_retries=5, delay=30, timeo
         try:
             response = requests.post(url, headers=headers, json=json_data, timeout=timeout)
 
-            # success
             if 200 <= response.status_code < 300:
                 return response
 
-            # rate limited → retry
             if response.status_code == 429:
+                if not retry_on_rate_limit:
+                    print("⚠️ Rate limit hit (429). Returning NotaryDash response immediately.")
+                    return response
                 attempt += 1
                 wait_time = min(delay * (2 ** (attempt - 1)), 120)
                 print(f"⚠️ Rate limit hit (429). Retrying in {wait_time} seconds... [{attempt}/{max_retries}]")
                 time.sleep(wait_time)
                 continue
-            
-            # other error (5xx) -> maybe retry? For now, we return response if it's not 429 but connected.
+
             return response
 
         except RequestException as e:
+            if not retry_on_rate_limit:
+                print(f"⚠️ Request failed: {e}. No retry (retry_on_rate_limit=False).")
+                return None
             attempt += 1
             wait_time = min(delay * (2 ** (attempt - 1)), 120)
             print(f"⚠️ Request failed: {e}. Retrying in {wait_time} seconds... [{attempt}/{max_retries}]")
@@ -412,10 +427,15 @@ class NotaryDashServices:
         return None
     
     @staticmethod
-    def create_client(data):
+    def create_client(data, *, retry_on_rate_limit=True):
         url = f"{BASE_URL}/api/v2/clients"
-        
-        response = post_with_retry(url, headers=Notary_header, json_data=data)
+
+        response = post_with_retry(
+            url,
+            headers=Notary_header,
+            json_data=data,
+            retry_on_rate_limit=retry_on_rate_limit,
+        )
 
         if response and 200 <= response.status_code < 300:
             print("✅ Client created successfully.")
@@ -425,7 +445,7 @@ class NotaryDashServices:
         return None
 
     @staticmethod
-    def create_client_user(client_id: str, user_data: dict):
+    def create_client_user(client_id: str, user_data: dict, *, retry_on_rate_limit=True):
         """
         Create a new user under a specific client.
         
@@ -460,7 +480,12 @@ class NotaryDashServices:
         }
 
         try:
-            response = post_with_retry(url, headers=headers, json_data=user_data)
+            response = post_with_retry(
+                url,
+                headers=headers,
+                json_data=user_data,
+                retry_on_rate_limit=retry_on_rate_limit,
+            )
 
             if response and 200 <= response.status_code < 300:
                 print("✅ Client user created successfully.")

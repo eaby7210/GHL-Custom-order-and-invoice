@@ -708,19 +708,20 @@ def stripe_webhook(request):
     
     data_object = event['data']['object']
     
-    # Check if event already processed
+    # Skip only successfully processed events; allow Stripe retries to re-run.
     evt_log = StripeWebhookEventLog.objects.filter(event_id=event_id).first()
-    if evt_log:
+    if evt_log and evt_log.processed:
         print(f"⚠️ Event {event_id} already processed at {evt_log.created_at}")
         return HttpResponse(status=200)
-    
-    # Create event log
-    evt_log = StripeWebhookEventLog(
-        event_id=event_id,
-        event_type=event_type,
-        created_at=make_aware(datetime.datetime.fromtimestamp(event_created)) if event_created else None,
-        event_data=json.dumps(data_object, indent=4),
-    )
+
+    if not evt_log:
+        evt_log = StripeWebhookEventLog(
+            event_id=event_id,
+            event_type=event_type,
+            created_at=make_aware(datetime.datetime.fromtimestamp(event_created)) if event_created else None,
+            event_data=json.dumps(data_object, indent=4),
+        )
+        evt_log.save()
     
     payment_indent_id = data_object.get("payment_intent", None)
     print(f"Payment intent ID: {payment_indent_id}")
@@ -777,23 +778,19 @@ def stripe_webhook(request):
         print(f"Payment status: {data_object.get('payment_status')}")
         print(f"Amount total: {data_object.get('amount_total')}")
         
-        session_obj = handle_checkout_session_completed(event)
-        print(f"handle_checkout_session_completed returned: {session_obj is not None}")
-        
+        session_obj, retriable_failure = handle_checkout_session_completed(event)
+        print(
+            f"handle_checkout_session_completed returned: "
+            f"session={session_obj is not None}, retriable={retriable_failure}"
+        )
+
         if not session_obj:
             msg = "Failed to process CheckoutSession. Expiring session due to server error."
             print(f"❌ {msg}")
             evt_log.error_message = msg
-            evt_log.processed = True
+            evt_log.processed = not retriable_failure
             evt_log.save()
-            
-            # Expire the session - Removed because session is already completed
-            # try:
-            #     stripe.checkout.Session.expire(data_object.get("id"))
-            #     print("✅ Session expired successfully")
-            # except Exception as e:
-            #     print(f"❌ Failed to expire session: {e}")
-            
+
             return HttpResponse(status=500)
         else:
             print("✅ Session processed successfully.")
@@ -1169,6 +1166,23 @@ def handle_charge_succeeded(event):
         }
     )
 
+def reset_order_processing_to_pending(order_id, reason=""):
+    """Release processing lock so Stripe webhook retry can run process_order again."""
+    updated = Order.objects.filter(
+        id=order_id,
+        processing_status="processing",
+    ).update(processing_status="pending")
+    if updated:
+        print(
+            f"↩️ Order {order_id} reset to pending"
+            + (f" ({reason})" if reason else "")
+        )
+
+
+# Returned from process_order when NotaryDash/transient errors should retry.
+PROCESS_ORDER_RETRYABLE = object()
+
+
 def handle_charge_updated(event):
     import time
     time.sleep(1)
@@ -1211,23 +1225,28 @@ def handle_payment_intent_requires_action(event):
         # We need to refresh object to have new status in memory if we use it, though we don't strictly need it for process_order
         order_obj.processing_status = "processing" 
 
-        processed = process_order(event,order_obj)
-        
-        if processed:
+        processed = process_order(event, order_obj)
+
+        if processed is True:
             order_obj.processing_status = "completed"
             order_obj.save(update_fields=["processing_status"])
+        elif processed is PROCESS_ORDER_RETRYABLE:
+            reset_order_processing_to_pending(
+                order_obj.id, "NotaryDash rate limit / transient error"
+            )
+            order_obj.refresh_from_db()
         else:
             order_obj.processing_status = "failed"
             order_obj.save(update_fields=["processing_status"])
-        
+
     except Exception as e:
         print(f"Error in handle_payment_intent_requires_action: {e}")
         try:
-             # Attempt to mark as failed if we have the order_obj reference
-             if 'order_obj' in locals() and order_obj:
-                 order_obj.processing_status = "failed"
-                 order_obj.save(update_fields=["processing_status"])
-        except:
+            if "order_obj" in locals() and order_obj:
+                reset_order_processing_to_pending(
+                    order_obj.id, "exception in payment_intent handler"
+                )
+        except Exception:
             pass
         return None
 
@@ -1259,7 +1278,7 @@ def handle_checkout_session_completed(event):
         
         if not order_obj:
             print("ERROR: No order found with this session ID")
-            return None
+            return None, False
         
         print(f"Order ID: {order_obj.id}, Company ID: {order_obj.company_id}, User ID: {order_obj.user_id}")
 
@@ -1296,17 +1315,26 @@ def handle_checkout_session_completed(event):
             print(f"🔒 Order {order_obj.id} locked for processing.")
             order_obj.processing_status = "processing"
 
-            # Determine success of processing
             processed_successfully = process_order(event, order_obj)
-            
-            if processed_successfully:
-                 order_obj.processing_status = "completed"
-                 order_obj.save(update_fields=["processing_status"])
+
+            if processed_successfully is True:
+                order_obj.processing_status = "completed"
+                order_obj.save(update_fields=["processing_status"])
+            elif processed_successfully is PROCESS_ORDER_RETRYABLE:
+                print(
+                    "ERROR: retriable process_order failure in "
+                    "handle_checkout_session_completed"
+                )
+                reset_order_processing_to_pending(
+                    order_obj.id, "NotaryDash rate limit / transient error"
+                )
+                order_obj.refresh_from_db()
+                return None, True
             else:
-                 print("ERROR: process_order failed in handle_checkout_session_completed")
-                 order_obj.processing_status = "failed"
-                 order_obj.save(update_fields=["processing_status"])
-                 return None
+                print("ERROR: process_order failed in handle_checkout_session_completed")
+                order_obj.processing_status = "failed"
+                order_obj.save(update_fields=["processing_status"])
+                return None, False
 
         # Proceed to update Session object (keeping existing logic for session tracking)
         
@@ -1331,12 +1359,16 @@ def handle_checkout_session_completed(event):
         print(f"Traceback: {traceback.format_exc()}")
         
         # CRITICAL FIX: Release the lock by setting status to 'failed'
-        if 'order_obj' in locals() and order_obj:
-            print(f"⚠️ An exception occurred. Resetting processing_status for Order {order_obj.id} to 'failed'.")
-            order_obj.processing_status = "failed"
-            order_obj.save(update_fields=["processing_status"])
-            
-        return None
+        if "order_obj" in locals() and order_obj:
+            print(
+                f"⚠️ An exception occurred. Resetting processing_status for "
+                f"Order {order_obj.id} to 'pending'."
+            )
+            reset_order_processing_to_pending(
+                order_obj.id, "exception in checkout session handler"
+            )
+
+        return None, True
     
     print("Creating/updating CheckoutSession...")
     session_obj, created = CheckoutSession.objects.update_or_create(
@@ -1356,8 +1388,8 @@ def handle_checkout_session_completed(event):
     
     print(f"CheckoutSession {'created' if created else 'updated'}: {session_obj.session_id}")
     print("=== HANDLE_CHECKOUT_SESSION_COMPLETED FINISHED ===")
-    
-    return session_obj
+
+    return session_obj, False
 
 def process_order(event,order_obj):
     obj = event['data']['object']
@@ -1400,8 +1432,17 @@ def process_order(event,order_obj):
         # -------------------------
         
         print("Calling NotaryDashServices.get_client_one_user...")
-        client_user = NotaryDashServices.get_client_one_user(company_id, user_id)
-        client_user = client_user.get("data", {}) if client_user else {}
+        client_user_response = NotaryDashServices.get_client_one_user(
+            company_id, user_id
+        )
+        if not client_user_response:
+            print(
+                "ERROR: get_client_one_user failed (e.g. NotaryDash 429). "
+                "Order will be reset to pending for webhook retry."
+            )
+            return PROCESS_ORDER_RETRYABLE
+
+        client_user = client_user_response.get("data", {}) or {}
         print(f"Client user retrieved: {bool(client_user)}")
         try:
             contact_phone = format_phone_number(order_obj.contact_phone_sched)
@@ -1532,7 +1573,7 @@ def process_order(event,order_obj):
         print(f"Exception type: {type(e).__name__}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
-        return None
+        return PROCESS_ORDER_RETRYABLE
     
 
 
