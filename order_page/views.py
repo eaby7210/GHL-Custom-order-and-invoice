@@ -550,6 +550,19 @@ def create_notary_user_from_registration_form(
 
     email_check = validate_framer_registration_email(email)
     if not email_check["valid"]:
+        if email_check.get("code") == "duplicate":
+            existing_user = NotaryUser.objects.filter(email__iexact=email, deleted_at__isnull=True).first()
+            if existing_user:
+                company_id = existing_user.last_company_id
+                user_id = existing_user.id
+                return (
+                    {
+                        "status": "ok",
+                        "message": "Account already exists",
+                        "url": f"https://go.investorbootz.com/thankyou?company_id={company_id}&client_id={user_id}",
+                    },
+                    status.HTTP_200_OK,
+                )
         return {"message": email_check["message"]}, status.HTTP_400_BAD_REQUEST
 
     if not company:

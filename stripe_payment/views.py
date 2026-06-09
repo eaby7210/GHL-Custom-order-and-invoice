@@ -318,7 +318,10 @@ class FormSubmissionAPIView(APIView):
                     intent_status = intent.status
                     client_secret = intent.client_secret
                     if intent.status == "succeeded":
-                        order.processing_status = "completed"
+                        if order.notary_order_id:
+                            order.processing_status = "completed"
+                        else:
+                            order.processing_status = "pending"
                     order.save()
                 else:
                     # Intent creation failed (likely CardError), but we have a redirect_url (failure page)
@@ -327,10 +330,11 @@ class FormSubmissionAPIView(APIView):
                     # Or we can return 200.
                     pass
                 
+                message = "Order processed successfully." if order.notary_order_id else "Payment processed. Finalizing booking details in the background."
                 return Response({
-                    "message": "Order processed",
+                    "message": message,
                     "order_id": order.id, 
-                    "status": intent_status,
+                    "status": intent_status if order.notary_order_id else "pending_fulfillment",
                     "client_secret": client_secret,
                     "redirect_url": redirect_url
                 }, status=status_code)
@@ -1231,13 +1235,29 @@ def handle_payment_intent_requires_action(event):
             order_obj.processing_status = "completed"
             order_obj.save(update_fields=["processing_status"])
         elif processed is PROCESS_ORDER_RETRYABLE:
+            print("ERROR: retriable process_order failure in handle_payment_intent_requires_action. Queueing Celery retry task...")
             reset_order_processing_to_pending(
                 order_obj.id, "NotaryDash rate limit / transient error"
             )
+            
+            # Initialize 24-hour limit tracker in Cache DB
+            from django.core.cache import cache
+            import time
+            start_time_key = f"order_fulfillment_start_time:{order_obj.id}"
+            if not cache.get(start_time_key):
+                cache.set(start_time_key, time.time(), 26 * 60 * 60)
+            
+            # Queue the Celery task to retry in 30 seconds
+            from .tasks import fulfill_order_task
+            fulfill_order_task.apply_async(args=[order_obj.id, event], countdown=30)
+            
             order_obj.refresh_from_db()
         else:
             order_obj.processing_status = "failed"
             order_obj.save(update_fields=["processing_status"])
+            print("ERROR: non-retryable failure in handle_payment_intent_requires_action. Initiating refund.")
+            from .tasks import handle_fulfillment_timeout_and_refund
+            handle_fulfillment_timeout_and_refund(order_obj.id)
 
     except Exception as e:
         print(f"Error in handle_payment_intent_requires_action: {e}")
@@ -1323,18 +1343,30 @@ def handle_checkout_session_completed(event):
             elif processed_successfully is PROCESS_ORDER_RETRYABLE:
                 print(
                     "ERROR: retriable process_order failure in "
-                    "handle_checkout_session_completed"
+                    "handle_checkout_session_completed. Queueing Celery retry task..."
                 )
                 reset_order_processing_to_pending(
                     order_obj.id, "NotaryDash rate limit / transient error"
                 )
+                
+                # Initialize 24-hour limit tracker in Cache DB
+                from django.core.cache import cache
+                import time
+                start_time_key = f"order_fulfillment_start_time:{order_obj.id}"
+                if not cache.get(start_time_key):
+                    cache.set(start_time_key, time.time(), 26 * 60 * 60)
+                
+                # Queue the Celery task to retry in 30 seconds
+                from .tasks import fulfill_order_task
+                fulfill_order_task.apply_async(args=[order_obj.id, event], countdown=30)
+                
                 order_obj.refresh_from_db()
-                return None, True
             else:
-                print("ERROR: process_order failed in handle_checkout_session_completed")
+                print("ERROR: process_order failed in handle_checkout_session_completed. Initiating refund.")
                 order_obj.processing_status = "failed"
                 order_obj.save(update_fields=["processing_status"])
-                return None, False
+                from .tasks import handle_fulfillment_timeout_and_refund
+                handle_fulfillment_timeout_and_refund(order_obj.id)
 
         # Proceed to update Session object (keeping existing logic for session tracking)
         
@@ -1451,68 +1483,7 @@ def process_order(event,order_obj):
         contact_email = client_user.get("email")
         print(f"Contact phone: {contact_phone}, Contact email: {contact_email}")
         
-        # print("")
-        # token_obj = OAuthServices.get_valid_access_token_obj()
-        # print(f"Token location ID: {token_obj.LocationId if token_obj else 'None'}")
-        
-        # print("Searching for existing contacts...")
-        # search_response = ContactServices.search_contacts(token_obj.LocationId, query={
-        #     "locationId": "n7iGMwfy1T5lZZacxygj",
-        #     "page": 1,
-        #     "pageLimit": 20,
-        #     "filters": [
-        #         {
-        #             "field": "email",
-        #             "operator": "eq",
-        #             "value": contact_email
-        #         },
-        #         # {
-        #         #     "field": "phone",
-        #         #     "operator": "eq",
-        #         #     "value": contact_phone
-        #         # },
-        #     ],
-        #     "sort": [
-        #         {
-        #             "field": "dateAdded",
-        #             "direction": "desc"
-        #         }
-        #     ]
-        # })
-        
-        # # print(f"Contact search response: {json.dumps(search_response, indent=4)}")
-        
-        # if len(search_response.get("contacts", [])) > 0:
-        #     contact_data = search_response["contacts"][0]
-        #     # print(f"Found existing contact: {json.dumps(contact_data, indent=4)}")
-        # else:
-        #     client_attr = client_user.get("attr")
-        #     notary_phone = (client_attr.get("phone") if client_attr.get("phone") else client_attr.get("mobile_phone") ) #type: ignore
-        #     ghl_phone = notary_phone if notary_phone else contact_phone 
-        #     print("Creating new contact...")
-        #     contact = {
-        #         "firstName": client_user.get("first_name") if client_user.get("first_name") else order_obj.contact_first_name_sched,
-        #         "lastName": client_user.get("last_name") if client_user.get("last_name") else order_obj.contact_last_name_sched,
-        #         # "name": contact_name,
-        #         "locationId": token_obj.LocationId,
-        #         "email": contact_email,
-        #         "phone": ghl_phone,
-        #         "country": "US",  
-        #         "type": "customer"  
-        #     }
-        #     contact_data, status = ContactServices.post_contact(token_obj.LocationId, contact)
-        #     print(f"Contact creation status: {status}")
-            
-        #     if status != 201:
-        #         contact_id = contact_data.get("meta", {}).get("contactId", None)
-        #         print(f"Contact creation failed with status {status}. Attempting to retrieve existing contact by ID: {contact_id}")
-        #         if contact_id:
-        #             contact_data = ContactServices.get_contact(token_obj.LocationId, contact_id)
-        #             if contact_data:
-        #                 ContactServices.save_contact(contact_data)
-        #             contact_data["id"] = contact_id
-        #             # print(f"Contact creation conflicted with: {contact_data.get('id')} Using {json.dumps(contact_data, indent=4)}")
-        #     ContactServices.save_contact(contact_data)
+
         
         print("=== ABOUT TO CALL BUILD_STRIPE_INVOICE_AND_NOTARY_ORDER ===")
         print(f"Parameters: order_obj={order_obj.id}")
@@ -1523,18 +1494,8 @@ def process_order(event,order_obj):
 
         print("=== BUILD_STRIPE_INVOICE_AND_NOTARY_ORDER COMPLETED ===")
         if not notary_order:
-            print("ERROR: Notary order not created. Initiating automated refund for captured funds.")
-            if payment_intent_id:
-                try:
-                    refund = stripe.Refund.create(
-                        payment_intent=payment_intent_id,
-                        reason="requested_by_customer",
-                        metadata={"reason": "NotaryDash Downstream Failure"}
-                    )
-                    print(f"✅ Automated Refund Executed: {refund.id}")
-                except Exception as re:
-                     print(f"⚠️ Critical: Failed to automatically refund PaymentIntent {payment_intent_id}: {re}")
-            return None
+            print("ERROR: Notary order not created. Returning PROCESS_ORDER_RETRYABLE to queue background retries.")
+            return PROCESS_ORDER_RETRYABLE
 
         # order_obj.location_id = token_obj.LocationId
         order_obj.invoice_id = stripe_invoice.id if stripe_invoice else order_obj.invoice_id

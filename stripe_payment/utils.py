@@ -950,6 +950,8 @@ def _fulfill_notary_order_after_invoice_pay(order: Order, payment_intent) -> Non
     Only call after Invoice.pay succeeds.
     """
     from .views import build_notary_order, _ghl_invoice_items_and_notary_product_names
+    from django.core.cache import cache
+    import time
 
     if getattr(order, "notary_order_id", None):
         return
@@ -964,9 +966,34 @@ def _fulfill_notary_order_after_invoice_pay(order: Order, payment_intent) -> Non
 
     notary_order = build_notary_order(order, notary_product_names, client_user, event_obj)
     if not notary_order:
-        raise NotaryFulfillmentError(
-            f"Payment captured for order {order.id} but NotaryDash fulfillment failed."
-        )
+        print(f"⚠️ First failure of NotaryDash order creation for Order {order.id}. Delegating to Celery recursive retry logic...")
+
+        # Initialize 24-hour limit tracker in Cache DB
+        start_time_key = f"order_fulfillment_start_time:{order.id}"
+        if not cache.get(start_time_key):
+            cache.set(start_time_key, time.time(), 26 * 60 * 60)
+
+        # Make sure order processing status is pending for Celery task to pick up
+        order.processing_status = "pending"
+        order.save(update_fields=["processing_status"])
+
+        # Queue the Celery task to retry in 30 seconds
+        from .tasks import fulfill_order_task
+        # build the event payload that process_order expects
+        event_payload = {
+            "id": f"evt_from_saved_card_{order.id}_{int(time.time())}",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "object": "payment_intent",
+                    "id": payment_intent.id,
+                    "amount": getattr(payment_intent, "amount", None) or 0,
+                    "metadata": getattr(payment_intent, "metadata", None) or {},
+                }
+            }
+        }
+        fulfill_order_task.apply_async(args=[order.id, event_payload], countdown=30)
+        return
 
     if order.notary_order_id and order.invoice_id:
         try:

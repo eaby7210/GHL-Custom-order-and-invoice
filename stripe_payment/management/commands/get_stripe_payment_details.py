@@ -11,6 +11,7 @@ class Command(BaseCommand):
         group.add_argument('--payment-intent', '-p', type=str, help='The ID of the PaymentIntent to retrieve')
         group.add_argument('--session', '-s', type=str, help='The ID of the Checkout Session to retrieve')
         group.add_argument('--event', '-e', type=str, help='The ID of the Webhook Event to retrieve')
+        group.add_argument('--invoice', '-i', type=str, help='The ID of the Invoice to retrieve')
         parser.add_argument(
             '--event-pages',
             type=int,
@@ -66,6 +67,18 @@ class Command(BaseCommand):
                     event_scan_pages=options['event_pages'],
                 )
 
+            elif options.get('invoice'):
+                invoice_id = options['invoice']
+                invoice = stripe.Invoice.retrieve(invoice_id)
+                self.stdout.write(self.style.SUCCESS(f"Successfully retrieved Invoice: {invoice_id}"))
+                self._print_json(invoice)
+
+                if getattr(invoice, 'payment_intent', None):
+                    self._retrieve_and_print_payment_intent(
+                        invoice.payment_intent,
+                        event_scan_pages=options['event_pages'],
+                    )
+
         except stripe.error.StripeError as e:
             self.stdout.write(self.style.ERROR(f"Stripe Error: {e}"))
         except Exception as e:
@@ -88,7 +101,7 @@ class Command(BaseCommand):
         oid = getattr(obj, 'id', None)
         if otype == 'payment_intent' and oid == pi_id:
             return True
-        if otype in ('checkout.session', 'charge'):
+        if otype in ('checkout.session', 'charge', 'invoice'):
             return self._payment_intent_ref(obj) == pi_id
         return False
 
