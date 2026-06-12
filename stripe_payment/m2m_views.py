@@ -694,6 +694,10 @@ def _post_to_notarydash(order, product_names):
         order.save()
         print(f"SUCCESS: Notary order created with ID: {order_id_num}")
 
+        from stripe_payment.utils import sync_stripe_billing_after_notary_order
+
+        sync_stripe_billing_after_notary_order(order)
+
         # Fire signal
         from .signals import notary_order_created
         notary_order_created.send(

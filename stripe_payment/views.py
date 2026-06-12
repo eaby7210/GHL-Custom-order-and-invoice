@@ -37,7 +37,6 @@ from .utils import (
     create_draft_stripe_invoice_for_order,
     apply_stripe_invoice_discount_cents,
     retrieve_invoice,
-    stripe_invoice_description_for_order,
     order_status_emails_list_from_order,
     notary_participants_from_order,
 )
@@ -1221,6 +1220,13 @@ def handle_payment_intent_requires_action(event):
                 f"✅ Order {order_obj.id} cannot be locked "
                 f"(status={order_obj.processing_status}). Skipping PI requires_action."
             )
+            if order_obj.notary_order_id:
+                from stripe_payment.utils import sync_stripe_billing_after_notary_order
+
+                sync_stripe_billing_after_notary_order(
+                    order_obj,
+                    payment_intent_id=payment_intent_id,
+                )
             return None
 
         # Lock acquired, proceed
@@ -1329,7 +1335,13 @@ def handle_checkout_session_completed(event):
                 f"✅ Order {order_obj.id} cannot be locked "
                 f"(status={order_obj.processing_status}). Skipping Session Completed."
             )
-            pass
+            if order_obj.notary_order_id:
+                from stripe_payment.utils import sync_stripe_billing_after_notary_order
+
+                sync_stripe_billing_after_notary_order(
+                    order_obj,
+                    payment_intent_id=payment_intent_id,
+                )
         else:
             # Lock acquired
             print(f"🔒 Order {order_obj.id} locked for processing.")
@@ -1454,6 +1466,12 @@ def process_order(event,order_obj):
             try:
                 inv_chk = stripe.Invoice.retrieve(order_obj.invoice_id)
                 if getattr(inv_chk, "status", None) == "paid":
+                    from stripe_payment.utils import sync_stripe_billing_after_notary_order
+
+                    sync_stripe_billing_after_notary_order(
+                        order_obj,
+                        payment_intent_id=payment_intent_id,
+                    )
                     print(
                         f"✅ Order {order_obj.id} already fulfilled "
                         f"(notary_order_id={order_obj.notary_order_id}, invoice paid)."
@@ -1508,22 +1526,12 @@ def process_order(event,order_obj):
             f"Order updated with Stripe invoice_id: {order_obj.invoice_id}"
             + (f", stripe_intent_id: {order_obj.stripe_intent_id}" if payment_intent_id else "")
         )
-        if payment_intent_id:
-            try:
-                pi = stripe.PaymentIntent.retrieve(payment_intent_id)
-                existing_metadata = pi.metadata or {}
-                order_id = str(notary_order.get("data", {}).get("order_id"))
-                new_metadata = {
-                    **existing_metadata,
-                    "notarydash_order_id":order_id,
-                }
-                stripe.PaymentIntent.modify(payment_intent_id, metadata=new_metadata)
-                print(f"✅ Metadata updated for PaymentIntent {payment_intent_id}")
-                
-            except Exception as e:
-                print(f"❌ Failed to update PaymentIntent metadata: {e}")
-        else:
-            print("⚠️ No payment_intent ID found in session")
+        from stripe_payment.utils import sync_stripe_billing_after_notary_order
+
+        sync_stripe_billing_after_notary_order(
+            order_obj,
+            payment_intent_id=payment_intent_id,
+        )
         # from stripe_payment.tasks import process_tos_for_ghl
         # process_tos_for_ghl(order_obj.user_id,contact_data["id"])
 
@@ -1823,6 +1831,16 @@ def build_notary_order(order: Order, prd_name, client_user, event_obj):
         
         print(f"=== BUILD NOTARY ORDER DEBUG END (SUCCESS) ===")
         order.save()
+
+        from stripe_payment.utils import (
+            payment_intent_id_from_event_obj,
+            sync_stripe_billing_after_notary_order,
+        )
+
+        sync_stripe_billing_after_notary_order(
+            order,
+            payment_intent_id=payment_intent_id_from_event_obj(event_obj),
+        )
         return ord_response
     else:
         print(f"ERROR: Notary order creation failed")
@@ -2006,7 +2024,7 @@ def create_stripe_invoice_for_order(
         order,
         stripe_customer_id=stripe_customer_id,
         currency=cur,
-        description=description,
+        # description=description,  # optional in Stripe; omitted for now
         extra_metadata=extra_meta,
     )
     if apply_event_discount:
@@ -2102,10 +2120,17 @@ def build_stripe_invoice_and_notary_order(
         st = getattr(inv, "status", None)
         if st == "draft":
             if getattr(order, "notary_order_id", None):
-                inv = stripe.Invoice.modify(
-                    inv.id,
-                    description=stripe_invoice_description_for_order(order),
-                )
+                inv = stripe.Invoice.retrieve(stripe_invoice.id)
+                meta = dict(getattr(inv, "metadata", None) or {})
+                meta["order_id"] = str(order.id)
+                meta["notarydash_order_id"] = str(order.notary_order_id)
+                meta["source"] = f"NotaryDash Order #{order.notary_order_id}"
+                stripe.Invoice.modify(inv.id, metadata=meta)
+                # Description omitted (optional; immutable after finalize):
+                # inv = stripe.Invoice.modify(
+                #     inv.id,
+                #     description=stripe_invoice_description_for_order(order),
+                # )
             stripe_invoice = finalize_stripe_invoice_paid_out_of_band(inv.id)
             print(
                 f"Stripe invoice {stripe_invoice.id} finalized and marked paid "

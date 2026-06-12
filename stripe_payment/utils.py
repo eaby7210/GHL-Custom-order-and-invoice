@@ -549,8 +549,103 @@ def stripe_invoice_description_for_order(order: Order) -> str:
     return f"Order #{num} — {order.company_name or 'Notary services'}"
 
 
-# Draft invoices get this until NotaryDash order_id exists; views patch before finalize.
-STRIPE_INVOICE_DESCRIPTION_PENDING_NOTARY_ID = "Creating notary order ID…"
+def sync_stripe_billing_after_notary_order(
+    order: Order,
+    *,
+    payment_intent_id=None,
+) -> None:
+    """
+    After NotaryDash order_id exists, patch Stripe Invoice + PaymentIntent metadata.
+    Idempotent; safe from Celery retries. Invoice description omitted (optional in
+    Stripe; immutable after finalize — use metadata for notarydash_order_id).
+    """
+    notary_id = getattr(order, "notary_order_id", None)
+    if notary_id is None or not str(notary_id).strip():
+        return
+
+    notary_id_str = str(notary_id).strip()
+
+    if getattr(order, "invoice_id", None):
+        try:
+            inv = stripe.Invoice.retrieve(order.invoice_id)
+            meta = dict(getattr(inv, "metadata", None) or {})
+            meta["order_id"] = str(order.id)
+            meta["notarydash_order_id"] = notary_id_str
+            meta["source"] = f"NotaryDash Order #{notary_id_str}"
+            if getattr(order, "stripe_session_id", None):
+                meta["stripe_session_id"] = str(order.stripe_session_id)
+
+            stripe.Invoice.modify(order.invoice_id, metadata=meta)
+            print(
+                f"✅ Stripe invoice {order.invoice_id} metadata synced "
+                f"(notarydash_order_id={notary_id_str})"
+            )
+        except Exception as e:
+            print(
+                f"⚠️ Failed to sync Stripe invoice {order.invoice_id} "
+                f"(order {order.id}): {e}"
+            )
+
+    pi_id = payment_intent_id or getattr(order, "stripe_intent_id", None)
+    if not pi_id and getattr(order, "invoice_id", None):
+        try:
+            inv = stripe.Invoice.retrieve(
+                order.invoice_id,
+                expand=["payments.data.payment.payment_intent"],
+            )
+            pi = payment_intent_from_paid_invoice(inv)
+            pi_id = pi.id if pi else None
+        except Exception as e:
+            print(
+                f"⚠️ Could not resolve PaymentIntent from invoice "
+                f"{order.invoice_id}: {e}"
+            )
+
+    if not pi_id:
+        print(f"⚠️ No PaymentIntent to sync for order {order.id}")
+        return
+
+    try:
+        pi = stripe.PaymentIntent.retrieve(pi_id)
+        new_metadata = {
+            **dict(getattr(pi, "metadata", None) or {}),
+            "order_id": str(order.id),
+            "notarydash_order_id": notary_id_str,
+        }
+        stripe.PaymentIntent.modify(pi_id, metadata=new_metadata)
+        print(
+            f"✅ PaymentIntent {pi_id} metadata synced "
+            f"(notarydash_order_id={notary_id_str})"
+        )
+    except Exception as e:
+        print(f"❌ Failed to sync PaymentIntent {pi_id} metadata: {e}")
+
+
+def payment_intent_id_from_event_obj(event_obj) -> str | None:
+    """Resolve PaymentIntent id from checkout.session or payment_intent event dict."""
+    if not event_obj:
+        return None
+    if isinstance(event_obj, dict):
+        if event_obj.get("object") == "payment_intent":
+            pid = event_obj.get("id")
+            return str(pid) if pid else None
+        pi = event_obj.get("payment_intent")
+        if isinstance(pi, str):
+            return pi
+        if isinstance(pi, dict):
+            pid = pi.get("id")
+            return str(pid) if pid else None
+        return None
+    if getattr(event_obj, "object", None) == "payment_intent":
+        pid = getattr(event_obj, "id", None)
+        return str(pid) if pid else None
+    pi = getattr(event_obj, "payment_intent", None)
+    if isinstance(pi, str):
+        return pi
+    if pi is not None:
+        pid = getattr(pi, "id", None)
+        return str(pid) if pid else None
+    return None
 
 
 def create_draft_stripe_invoice_for_order(
@@ -582,6 +677,8 @@ def create_draft_stripe_invoice_for_order(
             else "checkout_pending"
         ),
     }
+    if getattr(order, "notary_order_id", None):
+        meta["notarydash_order_id"] = str(order.notary_order_id).strip()
     if getattr(order, "stripe_session_id", None):
         meta["stripe_session_id"] = str(order.stripe_session_id)
     if extra_metadata:
@@ -597,14 +694,17 @@ def create_draft_stripe_invoice_for_order(
         "days_until_due": 1,
         "auto_advance": False,
         "currency": cur,
-        "description": (
-            description
-            if description is not None
-            else STRIPE_INVOICE_DESCRIPTION_PENDING_NOTARY_ID
-        ),
+        # Stripe invoice description is optional; omitted until PDF strategy settled.
+        # "description": (
+        #     description
+        #     if description is not None
+        #     else stripe_invoice_description_for_order(order)
+        # ),
         "footer": footer,
         "metadata": meta,
     }
+    if description is not None:
+        inv_params["description"] = description
 
     # Natively inject promo-code discounts into the Stripe Invoice!
     if getattr(order, "coupon_code", None):
@@ -647,9 +747,12 @@ def create_stripe_session(order: Order, domain, customer_id=None):
             coupon_data = {"coupon": coupon.id}
 
     invoice_data = {
-        "description": stripe_invoice_description_for_order(order),
+        # "description": stripe_invoice_description_for_order(order),
         "footer": stripe_invoice_footer_for_order(order),
-        "metadata": {"order_id": str(order.id)},
+        "metadata": {
+            "order_id": str(order.id),
+            "source": "checkout_pending",
+        },
     }
 
     address_field = stripe_invoice_address_custom_field_from_order(order)
@@ -995,18 +1098,6 @@ def _fulfill_notary_order_after_invoice_pay(order: Order, payment_intent) -> Non
         fulfill_order_task.apply_async(args=[order.id, event_payload], countdown=30)
         return
 
-    if order.notary_order_id and order.invoice_id:
-        try:
-            stripe.Invoice.modify(
-                order.invoice_id,
-                description=stripe_invoice_description_for_order(order),
-            )
-        except Exception as e:
-            print(
-                f"⚠️ Paid invoice {order.invoice_id} not updated with notary id "
-                f"(order {order.id}): {e}"
-            )
-
 
 def create_payment_intent(
     amount,
@@ -1039,7 +1130,8 @@ def create_payment_intent(
             items_str = items_str[:495] + "..."
 
         final_metadata["line_items"] = items_str
-        final_metadata["order_id"] = str(order.id)  # Ensure order_id is present
+        final_metadata["order_id"] = str(order.id)
+        final_metadata["source"] = "checkout_pending"
         final_metadata["stripe_payment_flow"] = "invoice_pay_saved_card"
 
         void_draft_stripe_invoice_if_any(getattr(order, "invoice_id", None))
