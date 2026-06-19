@@ -39,7 +39,7 @@ from .utils import (
     retrieve_invoice,
     order_status_emails_list_from_order,
     notary_participants_from_order,
-    company_accounting_email,
+    resolve_stripe_customer_email,
 )
 from .services import InvoiceServices, NotaryDashServices
 from .serializer import OrderSerializer
@@ -373,7 +373,7 @@ class FormSubmissionAPIView(APIView):
         try:
             # Ensure Stripe Customer exists for Checkout Session too (to allow saving card)
             if not company.stripe_customer_id:
-                customer_email = company_accounting_email(company) or getattr(client, "email", None)
+                customer_email = resolve_stripe_customer_email(company, preferred_user=client)
                 stripe_customer = create_stripe_customer(company.company_name, email=customer_email)
                 if stripe_customer:
                     company.stripe_customer_id = stripe_customer.id
@@ -604,7 +604,7 @@ def notary_view(request):
 
     # Create Stripe Customer if not exists (now that company + user email are known)
     if not company.stripe_customer_id:
-        customer_email = company_accounting_email(company) or getattr(user, "email", None)
+        customer_email = resolve_stripe_customer_email(company, preferred_user=user)
         stripe_customer = create_stripe_customer(company.company_name, email=customer_email)
         if stripe_customer:
             company.stripe_customer_id = stripe_customer.id

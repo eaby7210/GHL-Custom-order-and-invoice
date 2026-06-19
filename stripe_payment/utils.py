@@ -70,6 +70,50 @@ def company_accounting_email(company: Optional[NotaryClientCompany]) -> Optional
     return val.strip() if isinstance(val, str) and val.strip() else None
 
 
+def resolve_stripe_customer_email(
+    company: Optional[NotaryClientCompany], preferred_user=None
+) -> Optional[str]:
+    """
+    Email priority for a Stripe customer tied to ``company``:
+    1. company.attr['accounting_email']
+    2. preferred_user.email (the specific user in the current request flow)
+    3. an admin NotaryUser of the company
+    4. any NotaryUser of the company with an email
+    Stripe (collection_method='send_invoice') rejects customers with no email,
+    so every creation path must run through this before calling create_stripe_customer.
+    """
+    email = company_accounting_email(company)
+    if email:
+        return email
+
+    preferred_email = (getattr(preferred_user, "email", None) or "").strip()
+    if preferred_email:
+        return preferred_email
+
+    if not company:
+        return None
+
+    admin_user = (
+        NotaryUser.objects.filter(last_company=company, is_admin=True)
+        .exclude(email="")
+        .exclude(email__isnull=True)
+        .first()
+    )
+    if admin_user and admin_user.email.strip():
+        return admin_user.email.strip()
+
+    any_user = (
+        NotaryUser.objects.filter(last_company=company)
+        .exclude(email="")
+        .exclude(email__isnull=True)
+        .first()
+    )
+    if any_user and any_user.email.strip():
+        return any_user.email.strip()
+
+    return None
+
+
 def apply_coupon_to_customer(customer_id, coupon_id):
     """
     Applies a coupon to a customer.
