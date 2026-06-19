@@ -367,8 +367,54 @@ class NotaryDashServices:
         print(f"❌ Failed: {response.status_code if response else 'No Response'}")
         return None
 
+    @staticmethod
+    def get_client_one_user_once(client_id, user_id):
+        """
+        Single GET to /api/v2/clients/{client_id}/users/{user_id}, no retries.
 
-    
+        Use where the caller already has this user cached in the DB (NotaryUser)
+        and can fall back to that record on failure — avoids blocking the
+        request/webhook worker on 429 backoff sleeps for data we already have.
+
+        Returns:
+            (body_dict, None) on 2xx JSON success (also cache-hit).
+            (None, "rate_limited") on HTTP 429.
+            (None, "error") on network errors, non-2xx, or invalid JSON.
+        """
+        env_tag = "test" if settings.NOTARY_TEST else "prod"
+        cache_key = (
+            "stripe_payment:notarydash:client_one_user:v1:"
+            f"{env_tag}:{client_id}:{user_id}"
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            print("✅ Single client user (cache hit).")
+            return cached, None
+
+        url = f"{BASE_URL}/api/v2/clients/{client_id}/users/{user_id}"
+        try:
+            response = requests.get(url, headers=Notary_header, timeout=DEFAULT_TIMEOUT)
+        except RequestException as exc:
+            print(f"❌ get_client_one_user_once network error: {exc}")
+            return None, "error"
+
+        if response.status_code == 429:
+            print("❌ get_client_one_user_once: NotaryDash returned 429 Too Many Requests")
+            return None, "rate_limited"
+
+        if 200 <= response.status_code < 300:
+            try:
+                payload = response.json()
+            except ValueError:
+                print("❌ get_client_one_user_once: response was not valid JSON")
+                return None, "error"
+            print("✅ Single client user retrieved successfully (single request).")
+            cache.set(cache_key, payload, NOTARY_CLIENT_ONE_USER_CACHE_SECONDS)
+            return payload, None
+
+        print(f"❌ get_client_one_user_once failed: {response.status_code}")
+        return None, "error"
+
     @staticmethod
     def get_client_user(client_id, url=None):
         if not url:

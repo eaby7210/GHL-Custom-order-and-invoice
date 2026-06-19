@@ -62,6 +62,14 @@ def create_stripe_customer(company_name, email=None, metadata=None):
         return None
 
 
+def company_accounting_email(company: Optional[NotaryClientCompany]) -> Optional[str]:
+    """Email stashed in NotaryClientCompany.attr['accounting_email'] (no dedicated column)."""
+    if not company:
+        return None
+    val = (getattr(company, "attr", None) or {}).get("accounting_email")
+    return val.strip() if isinstance(val, str) and val.strip() else None
+
+
 def apply_coupon_to_customer(customer_id, coupon_id):
     """
     Applies a coupon to a customer.

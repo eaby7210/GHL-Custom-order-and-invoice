@@ -39,6 +39,7 @@ from .utils import (
     retrieve_invoice,
     order_status_emails_list_from_order,
     notary_participants_from_order,
+    company_accounting_email,
 )
 from .services import InvoiceServices, NotaryDashServices
 from .serializer import OrderSerializer
@@ -372,7 +373,8 @@ class FormSubmissionAPIView(APIView):
         try:
             # Ensure Stripe Customer exists for Checkout Session too (to allow saving card)
             if not company.stripe_customer_id:
-                stripe_customer = create_stripe_customer(company.company_name)
+                customer_email = company_accounting_email(company) or getattr(client, "email", None)
+                stripe_customer = create_stripe_customer(company.company_name, email=customer_email)
                 if stripe_customer:
                     company.stripe_customer_id = stripe_customer.id
                     company.save()
@@ -526,15 +528,6 @@ def notary_view(request):
         )
     else:
         owner_id = company.owner_id
-    
-    # Create Stripe Customer if not exists
-    if not company.stripe_customer_id:
-        # User email is not directly on company, but we can try to use the user's email if available or just omit it
-        stripe_customer = create_stripe_customer(company.company_name)
-        if stripe_customer:
-            company.stripe_customer_id = stripe_customer.id
-            company.save()
-
 
     # -----------------------------------------------------
     # 2️⃣  FETCH OR CREATE USER
@@ -609,6 +602,13 @@ def notary_view(request):
         else:
             first_visit = False
 
+    # Create Stripe Customer if not exists (now that company + user email are known)
+    if not company.stripe_customer_id:
+        customer_email = company_accounting_email(company) or getattr(user, "email", None)
+        stripe_customer = create_stripe_customer(company.company_name, email=customer_email)
+        if stripe_customer:
+            company.stripe_customer_id = stripe_customer.id
+            company.save()
 
     payment_methods = []
     if company.stripe_customer_id:
@@ -1481,19 +1481,39 @@ def process_order(event,order_obj):
                 print(f"⚠️ Idempotency invoice check: {e}")
         # -------------------------
         
-        print("Calling NotaryDashServices.get_client_one_user...")
-        client_user_response = NotaryDashServices.get_client_one_user(
+        print("Calling NotaryDashServices.get_client_one_user_once...")
+        client_user_response, client_user_err = NotaryDashServices.get_client_one_user_once(
             company_id, user_id
         )
-        if not client_user_response:
+        if client_user_response:
+            client_user = client_user_response.get("data", {}) or {}
+            print(f"Client user retrieved: {bool(client_user)}")
+        else:
+            # Single attempt only — no retry/backoff sleep here, since this would
+            # block the webhook worker. The client user was already fetched and
+            # stored in NotaryUser when the order was placed, so fall back to
+            # that DB record instead of treating this as retryable.
             print(
-                "ERROR: get_client_one_user failed (e.g. NotaryDash 429). "
-                "Order will be reset to pending for webhook retry."
+                f"⚠️ get_client_one_user_once failed ({client_user_err}). "
+                "Falling back to DB NotaryUser record."
             )
-            return PROCESS_ORDER_RETRYABLE
+            notary_user = NotaryUser.objects.filter(id=user_id).first()
+            if not notary_user:
+                print(
+                    "ERROR: No cached NotaryUser found for fallback. "
+                    "Order will be reset to pending for webhook retry."
+                )
+                return PROCESS_ORDER_RETRYABLE
 
-        client_user = client_user_response.get("data", {}) or {}
-        print(f"Client user retrieved: {bool(client_user)}")
+            client_user = {
+                "id": notary_user.id,
+                "email": notary_user.email,
+                "first_name": notary_user.first_name,
+                "last_name": notary_user.last_name,
+                "name": notary_user.name,
+                "attr": notary_user.attr or {},
+            }
+            print(f"Using DB NotaryUser {notary_user.id} as client_user fallback.")
         try:
             contact_phone = format_phone_number(order_obj.contact_phone_sched)
         except:
