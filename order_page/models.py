@@ -1164,11 +1164,15 @@ class OptionGroup(TimeStampedModel):
         max_length=50,
         choices=[
             ("checkbox", "Checkbox"),
-            # ("radio", "Radio"),
+            ("radio", "Radio"),
             # ("dropdown", "Dropdown"),
         ],
         default="checkbox",
-        help_text="Type of option selection control."
+        help_text=(
+            "checkbox: items are independent. radio: items in this group are "
+            "mutually exclusive -- use for priceChange-type options where only "
+            "one should ever apply (selecting one clears the others)."
+        )
     )
     minimum_required = models.PositiveIntegerField(default=0)
    
