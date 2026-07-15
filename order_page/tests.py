@@ -289,6 +289,39 @@ class PricingEngineTests(SimpleTestCase):
         price = _recalc_item_price(adjusted, {}, {"witness": True})
         self.assertEqual(price, Decimal("65.00"))
 
+    def test_item_price_ignores_explicitly_unselected_submenu_radio(self):
+        """
+        Regression for order 10807: customer picked "Photos Only" (phOnly),
+        not the $9.99 panoramic video (ph360) — same radio group, so the
+        frontend submits ph360 with value=False rather than omitting it.
+        `False != 0` is False in Python (bool is an int subclass), so an
+        `is_active != 0` guard silently treated an explicitly-declined radio
+        sibling as active and charged for it anyway.
+        """
+        catalog_item = {
+            "id": "PHbasic",
+            "price": 165,
+            "basePrice": 165,
+            "options": {
+                "items": [
+                    {"id": "basic_interior", "label": "Interior", "value": True, "priceAdd": None, "priceChange": 95},
+                    {"id": "basic_exterior", "label": "Exterior", "value": True, "priceAdd": None, "priceChange": 80},
+                ]
+            },
+            "submenuPriceChange": {
+                "phOnly": {"type": "add", "value": 0},
+                "ph360": {"type": "add", "value": 9.99},
+            },
+        }
+        adjusted = _unit_adjusted_item(catalog_item, is_mobile=False, is_multi_unit=False, num_units=1)
+        # Both checkbox options left at their catalog defaults (True/True) -> no override.
+        price = _recalc_item_price(
+            adjusted,
+            {"basic_interior": True, "basic_exterior": True},
+            {"phOnly": True, "ph360": False},
+        )
+        self.assertEqual(price, Decimal("165.00"))
+
     def test_discount_qualified_count_requires_option_for_flagged_items(self):
         catalog_services = {
             "photos": {

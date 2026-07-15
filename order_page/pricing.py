@@ -148,7 +148,14 @@ def _recalc_item_price(adjusted_item, selected_option_ids, submenu_selections):
             if not change:
                 continue
             is_active = submenu_selections.get(opt_id)
-            if not is_active and is_active != 0:
+            # Mirrors orderPricingSync.js's `!isActive && isActive !== 0`
+            # (skip unselected, but let an explicit counter-zero through).
+            # `is_active != 0` doesn't work in Python: bool is an int
+            # subclass, so `False != 0` is False and an explicitly-false
+            # radio sibling (e.g. an unselected submenu radio option) fell
+            # through and had its price change applied anyway. Use identity
+            # checks instead, which don't conflate False with 0.
+            if is_active is None or is_active is False or is_active == "":
                 continue
             if change.get("type") == "add":
                 accumulated += Decimal(str(change.get("value") or 0))
