@@ -227,6 +227,8 @@ class OptionItemSerializer(serializers.ModelSerializer):
     valid_item_index = serializers.SerializerMethodField()
     priceAdd = serializers.SerializerMethodField()
     priceChange = serializers.SerializerMethodField()
+    type = serializers.SerializerMethodField()
+    name = serializers.CharField(allow_null=True)
 
     class Meta:
         model = OptionItem
@@ -238,10 +240,15 @@ class OptionItemSerializer(serializers.ModelSerializer):
             "priceAdd",
             "priceChange",
             "valid_item_index",
+            "type",
+            "name",
         ]
 
     def get_valid_item_index(self, obj):
         return []  # JS expects an empty array always
+
+    def get_type(self, obj):
+        return obj.type or "checkbox"
 
     def get_priceAdd(self, obj):
         if obj.price_type == "priceAdd" and obj.price_value is not None:

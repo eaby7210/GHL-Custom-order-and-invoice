@@ -290,13 +290,21 @@ class ServiceVarianceAdmin(admin.ModelAdmin):
 
 @admin.register(OptionItem)
 class OptionItemAdmin(admin.ModelAdmin):
-    list_display = ("label", "identifier", "value", "disabled",  "sort_order")
-  
+    list_display = ("label", "identifier", "value", "type", "name", "disabled", "sort_order")
+
     search_fields = ("label", "identifier")
-    list_filter = ("disabled",)
+    list_filter = ("disabled", "type")
     ordering = ("sort_order",)
     fieldsets = (
-        (None, {"fields": ("identifier", "label", "value", "disabled","price_type","price_value")}),
+        (None, {"fields": ("identifier", "label", "value", "disabled", "price_type", "price_value")}),
+        ("Selection Behavior", {
+            "fields": ("type", "name"),
+            "description": (
+                "Leave type blank/checkbox for independent options. Set to radio and give matching "
+                "options the same name to make them mutually exclusive within their item -- use this "
+                "for two priceChange options where only one should ever apply at once."
+            ),
+        }),
         ("Ordering", {"fields": ("sort_order",)}),
     )
 
