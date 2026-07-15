@@ -1213,22 +1213,6 @@ class OptionItem(TimeStampedModel):
             ("priceChange", "Change Into"),
         ], help_text="Price altering behavior")
     price_value= models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    type = models.CharField(
-        max_length=10,
-        choices=[("checkbox", "Checkbox"), ("radio", "Radio")],
-        blank=True,
-        null=True,
-        help_text="Selection behavior. Null/blank behaves as checkbox (independent, additive). "
-                   "Set to radio for options that should be mutually exclusive within their group "
-                   "(e.g. two priceChange options where only one should ever apply) -- pair with name.",
-    )
-    name = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Radio group key. Options sharing the same name (within the same item) are "
-                   "mutually exclusive when type=radio. Ignored for checkbox.",
-    )
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
