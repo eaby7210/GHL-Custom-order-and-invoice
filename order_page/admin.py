@@ -18,7 +18,8 @@ from .models import (
         DiscountLevel, CheckDiscloure
 )
 from .forms import SubmenuItemForm
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
+from django.urls import reverse
 from .models import TypeformForm, TypeformField, TypeformPartnerMapping, FramerRegistrationSubmission
 from .services import TypeformService
 from django.contrib import messages
@@ -315,13 +316,32 @@ class SubmenuPriceChangeAdmin(admin.ModelAdmin):
 
 
 class SubmenuPriceChangeInline(admin.TabularInline):
+    """Attached to SubmenuItemAdmin: which items does this submenu option reprice."""
     model = SubmenuPriceChange
+    fk_name = "submenu_item"
     extra = 1
     autocomplete_fields = ("form_item",)
     fields = ("form_item", "change_type", "value")
     ordering = ("form_item__sort_order",)
     verbose_name = "Form Item Price Modifier"
     verbose_name_plural = "Linked Form Item Price Modifiers"
+
+
+class FormItemPriceModifierInline(admin.TabularInline):
+    """
+    Attached to FormItemAdmin: the flip side of SubmenuPriceChangeInline.
+    Lets you set this item's submenu-driven price changes (e.g. per-page,
+    per-witness pricing) from the item's own edit page instead of having to
+    go find the submenu item first.
+    """
+    model = SubmenuPriceChange
+    fk_name = "form_item"
+    extra = 1
+    autocomplete_fields = ("submenu_item",)
+    fields = ("submenu_item", "change_type", "value")
+    ordering = ("submenu_item__sort_order",)
+    verbose_name = "Submenu Price Modifier"
+    verbose_name_plural = "Submenu Price Modifiers"
 
 
 class ModalOptionToggleInline(admin.TabularInline):
@@ -354,15 +374,16 @@ class DisclosureAdmin(admin.ModelAdmin):
 @admin.register(OptionGroup)
 class OptionGroupAdmin(admin.ModelAdmin):
     list_display = ("__str__", "type", "minimum_required")
-   
-    filter_horizontal = ("items",)
-    # ordering = ("sort_order",)
-    search_fields = ("form_item__title","__str__")
+
+    # autocomplete (not filter_horizontal) so this screen gets the "+" popup
+    # to create a brand-new OptionItem without leaving the group — used to
+    # require a separate trip to OptionItemAdmin first.
+    autocomplete_fields = ("items",)
+    search_fields = ("form_item__title", "items__label")
     fieldsets = (
         (None, {
             "fields": ("type", "minimum_required", "items")
         }),
-        # ("Meta", {"fields": ("sort_order",)})
     )
 
 
@@ -442,16 +463,25 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
         "title",
         "identifier",
         "price",
+        "base_price",
         "protection_invalid",
         "mobile_home_discount_valid",
         "multi_unit_valid",
+        "discount_eligible",
         "sort_order",
     )
-    list_editable = ("mobile_home_discount_valid", "multi_unit_valid")
-    list_filter = ("protection_invalid", "mobile_home_discount_valid", "multi_unit_valid")
+    list_editable = ("mobile_home_discount_valid", "multi_unit_valid", "discount_eligible")
+    list_filter = (
+        "protection_invalid",
+        "mobile_home_discount_valid",
+        "multi_unit_valid",
+        "discount_eligible",
+    )
     search_fields = ("title", "identifier")
     autocomplete_fields = ("option_group",)
+    readonly_fields = ("option_group_preview",)
     ordering = ("sort_order",)
+    inlines = [FormItemPriceModifierInline]
     fieldsets = (
         (None, {
             "fields": (
@@ -459,10 +489,11 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
                 "title",
                 "subtitle",
                 "price",
+                "base_price",
                 "min_lead_time",
-                # "base_price",
                 "protection_invalid",
                 "option_group",
+                "option_group_preview",
             )
         }),
         ("Unit Pricing Rules", {
@@ -472,8 +503,55 @@ class FormItemAdmin(SortableAdminMixin, admin.ModelAdmin):
                 "apply to this item. Both are enabled by default."
             ),
         }),
+        ("Stacking Discount", {
+            "fields": ("discount_eligible", "discount_requires_option"),
+            "description": (
+                "discount_eligible: selecting this item counts toward the order's stacking "
+                "discount tier count. discount_requires_option: only count it when at least "
+                "one of its options is also selected (e.g. photo add-ons)."
+            ),
+        }),
         ("Ordering", {"fields": ("sort_order",)}),
     )
+
+    def option_group_preview(self, obj):
+        """
+        This item's OptionGroup can be shared across other items/variances,
+        so it can't be inlined here directly (an inline edit would silently
+        change every item that reuses the same group). Instead: a direct
+        link to it plus a read-only price summary, so you don't have to go
+        find the right OptionGroup in a separate list first.
+        """
+        group = obj.option_group
+        if not group:
+            return "No option group linked."
+
+        url = reverse("admin:order_page_optiongroup_change", args=[group.pk])
+        items = list(group.items.all().order_by("sort_order"))
+
+        def _price_label(item):
+            if item.price_type == "priceAdd" and item.price_value is not None:
+                return f"+${item.price_value}"
+            if item.price_type == "priceChange" and item.price_value is not None:
+                return f"→ ${item.price_value}"
+            return "no price"
+
+        if items:
+            rows = format_html_join(
+                "",
+                "<li>{} — {}{}</li>",
+                (
+                    (item.label, _price_label(item), " (default on)" if item.value else "")
+                    for item in items
+                ),
+            )
+        else:
+            rows = format_html("<li>No options yet.</li>")
+
+        return format_html(
+            '<a href="{}">Edit "{}" option group</a><ul>{}</ul>', url, str(group), rows
+        )
+    option_group_preview.short_description = "Linked options (read-only preview)"
 
 
 @admin.register(ServiceForm)
