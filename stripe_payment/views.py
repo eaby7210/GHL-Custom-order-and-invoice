@@ -43,7 +43,11 @@ from .utils import (
 )
 from .services import InvoiceServices, NotaryDashServices
 from .serializer import OrderSerializer
+from order_page.pricing import reprice_order, PricingCatalogUnavailable
+import logging
 import stripe
+
+logger = logging.getLogger(__name__)
 # from stripe.error import SignatureVerificationError
 from stripe._error import SignatureVerificationError, StripeError
 from django.conf import settings
@@ -255,7 +259,22 @@ class FormSubmissionAPIView(APIView):
         order.total_price = total_bundle_price + total_ala_price
         order.save()
 
-        frontend_domain = request.headers.get("Origin") 
+        # Client-submitted prices above are provisional (needed to persist
+        # something before we know the order exists). Recompute every price
+        # from the order_page catalog now that selections are saved, and
+        # overwrite order.total_price / order.order_protection_price /
+        # Bundle.price / ALaCarteItem.price with server truth before any
+        # Stripe amount is built.
+        try:
+            reprice_order(order, data, company_id)
+        except PricingCatalogUnavailable as e:
+            logger.error("Pricing validation failed for order %s: %s", order.id, e)
+            return Response(
+                {"message": "Unable to validate pricing for this order. Please try again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        frontend_domain = request.headers.get("Origin")
         print(f"Frontend domain: {frontend_domain}")
 
         # Check for direct payment method
@@ -274,7 +293,7 @@ class FormSubmissionAPIView(APIView):
                 amount_cents = int(float(order.total_price or 0) * 100)
                 
                 # Check order protection
-                if order.order_protection and int(Decimal(order.order_protection_price))>0:
+                if order.order_protection and Decimal(order.order_protection_price) > 0:
                      amount_cents += int(Decimal(order.order_protection_price)*100)
 
                 # Apply Coupon Discount

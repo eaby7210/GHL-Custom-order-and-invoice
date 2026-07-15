@@ -30,6 +30,7 @@ from django.core.cache import cache
 from tolt.models import Link, Partner
 from tolt.services import ToltService
 from .services import GoogleService
+from .catalog import get_service_variance_payload
 
 
 def validate_framer_registration_email(email):
@@ -1149,9 +1150,6 @@ class NotaryCreationView(APIView):
 
 
 
-SERVICE_LOOKUP_CACHE_SECONDS = 15 * 60
-
-
 class ServiceLookupView(APIView):
     """
     Returns the detailed service + bundle structure for a given company.
@@ -1160,58 +1158,29 @@ class ServiceLookupView(APIView):
       - Attempts to find a variance assigned to the company.
       - Falls back to default if none exists.
 
-    Successful responses are cached for SERVICE_LOOKUP_CACHE_SECONDS (15 minutes).
+    Cache-or-DB resolution lives in catalog.get_service_variance_payload,
+    shared with stripe_payment's server-side order repricing so a form
+    submission can reuse the same catalog snapshot this view already cached.
     """
-
-    @staticmethod
-    def _service_lookup_cache_key(company_id: str) -> str:
-        return f"order_page:service_lookup:v1:{company_id.strip()}"
 
     def get(self, request, company_id: str):
         try:
-            cache_key = self._service_lookup_cache_key(company_id)
-            cached_payload = cache.get(cache_key)
-            if cached_payload is not None:
-                return Response(cached_payload, status=status.HTTP_200_OK)
-
-            # Case 1: If explicitly requesting the default
-            if company_id.lower() == "default":
-                variance = ServiceVariance.get_default()
-                if not variance:
-                    return Response(
-                        {"detail": "No default active service variance found."},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
-
-            else:
-                if not company_id:
-                    return Response(
-                        {"detail": "Company ID is required."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                # Case 2: Try to find company-specific variance
-                client = get_object_or_404(NotaryClientCompany, id=company_id)
-
-                variance = (
-                    ServiceVariance.objects.filter(clients=client, is_active=True)
-                    .prefetch_related("bundle_group__bundles", "service_category__services")
-                    .first()
+            if company_id.lower() != "default" and not company_id:
+                return Response(
+                    {"detail": "Company ID is required."},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
-                # Fallback to default
-                if not variance:
-                    variance = ServiceVariance.get_default()
-                    if not variance:
-                        return Response(
-                            {"detail": "No active variance found for client or default."},
-                            status=status.HTTP_404_NOT_FOUND,
-                        )
+            payload = get_service_variance_payload(company_id)
+            if not payload:
+                msg = (
+                    "No default active service variance found."
+                    if company_id.lower() == "default"
+                    else "No active variance found for client or default."
+                )
+                return Response({"detail": msg}, status=status.HTTP_404_NOT_FOUND)
 
-            # Serialize result
-            serializer = ServiceVarianceSerializer(variance)
-            data = serializer.data
-            cache.set(cache_key, data, SERVICE_LOOKUP_CACHE_SECONDS)
-            return Response(data, status=status.HTTP_200_OK)
+            return Response(payload, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response(

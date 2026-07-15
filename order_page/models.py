@@ -1124,6 +1124,16 @@ class FormItem(TimeStampedModel):
         verbose_name="Multi-Unit Pricing",
         help_text="If True, multi-unit tiered pricing (additional units at 50%) applies to this item."
     )
+    discount_eligible = models.BooleanField(
+        default=False,
+        verbose_name="Counts Toward Stacking Discount",
+        help_text="If True, selecting this item counts toward the order's stacking-discount tier count."
+    )
+    discount_requires_option = models.BooleanField(
+        default=False,
+        verbose_name="Discount Requires Option Selected",
+        help_text="If True, this item only counts toward the stacking discount when at least one of its options is also selected."
+    )
     sort_order = models.PositiveIntegerField(default=0)
     option_group = models.OneToOneField(
         "OptionGroup",

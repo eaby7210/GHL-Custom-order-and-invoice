@@ -296,6 +296,21 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+# Shared, cross-process cache (Redis DB 2 — separate index from the Celery
+# broker/result backend on DB 0). Previously unset, which defaulted to
+# Django's per-process LocMemCache: fine for a single dev server, but on
+# multi-worker gunicorn the order_page.ServiceLookupView cache and the
+# stripe_payment form-submission repricer (order_page.pricing.reprice_order)
+# could land on different worker processes and never actually share a cache
+# entry. Keys carry their own TTL (order_page/catalog.py) and Redis evicts
+# them natively — no separate cleanup task needed.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://localhost:6379/2",
+    }
+}
+
 CELERY_BEAT_SCHEDULE = {
     'example_task': {
         'task': 'stripe_payment.tasks.example_task',

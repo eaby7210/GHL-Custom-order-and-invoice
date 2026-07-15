@@ -204,3 +204,146 @@ class FramerRegistrationTests(TestCase):
         self.assertEqual(data["message"], "Account already exists")
         self.assertIn("company_id=12347", data["url"])
         self.assertIn("client_id=67892", data["url"])
+
+
+from decimal import Decimal
+from django.test import SimpleTestCase
+from .pricing import (
+    recalc_bundle_price,
+    _unit_adjusted_item,
+    _recalc_item_price,
+    _discount_qualified_count,
+    _discount_percent_for,
+    _resolve_service_protection,
+    _service_protection_amount,
+)
+
+
+class PricingEngineTests(SimpleTestCase):
+    """
+    Pure-function checks for order_page.pricing — no DB required. Mirrors
+    the fixtures used by investbootz's src/lib/bundlePricing.test.js so the
+    two engines can be sanity-checked against the same numbers.
+    """
+
+    databases = set()
+
+    def test_bundle_price_scales_with_unit_count(self):
+        catalog_bundle = {
+            "name": "Standard Bundle",
+            "basePrice": 300,
+            "price": 300,
+            "mobileHomeDiscountValid": True,
+            "multiUnitValid": True,
+            "options": {"items": []},
+        }
+        base, price = recalc_bundle_price(catalog_bundle, is_mobile=False, is_multi_unit=False, num_units=1, selected_options={})
+        self.assertEqual(price, Decimal("300.00"))
+
+        base, price = recalc_bundle_price(catalog_bundle, is_mobile=False, is_multi_unit=True, num_units=3, selected_options={})
+        self.assertEqual(price, Decimal("600.00"))  # 1 + 0.5*(3-1) = 2x
+
+    def test_bundle_price_mobile_discount_and_checkbox_option(self):
+        catalog_bundle = {
+            "name": "Mobile Bundle",
+            "basePrice": 200,
+            "price": 200,
+            "mobileHomeDiscountValid": True,
+            "multiUnitValid": True,
+            "options": {"items": [{"id": "rush", "type": "checkbox", "priceAdd": 25}]},
+        }
+        base, price = recalc_bundle_price(
+            catalog_bundle, is_mobile=True, is_multi_unit=False, num_units=1, selected_options={"rush": True}
+        )
+        # 200 * 0.85 = 170, + 25 add-on
+        self.assertEqual(price, Decimal("195.00"))
+
+    def test_item_price_unit_adjusted_and_priceadd_option(self):
+        catalog_item = {
+            "id": "PHbasic",
+            "price": 100,
+            "basePrice": 100,
+            "mobileHomeDiscountValid": True,
+            "multiUnitValid": True,
+            "options": {
+                "items": [
+                    {"id": "extra", "label": "Extra", "value": False, "priceAdd": 20, "priceChange": None}
+                ]
+            },
+        }
+        adjusted = _unit_adjusted_item(catalog_item, is_mobile=False, is_multi_unit=True, num_units=3)
+        self.assertEqual(adjusted["price"], Decimal("200.00"))  # 100 * 2x
+
+        price = _recalc_item_price(adjusted, {"extra": True}, {})
+        self.assertEqual(price, Decimal("220.00"))  # 200 base + 20 add-on
+
+    def test_item_price_submenu_add(self):
+        catalog_item = {
+            "id": "NTinperson",
+            "price": 50,
+            "basePrice": 50,
+            "options": {},
+            "submenuPriceChange": {"witness": {"type": "add", "value": 15}},
+        }
+        adjusted = _unit_adjusted_item(catalog_item, is_mobile=False, is_multi_unit=False, num_units=1)
+        price = _recalc_item_price(adjusted, {}, {"witness": True})
+        self.assertEqual(price, Decimal("65.00"))
+
+    def test_discount_qualified_count_requires_option_for_flagged_items(self):
+        catalog_services = {
+            "photos": {
+                "id": "photos",
+                "form": {"items": [{"id": "PHbasic", "discountEligible": True, "discountRequiresOption": True}]},
+            },
+            "notary": {
+                "id": "notary",
+                "form": {"items": [{"id": "NTinperson", "discountEligible": True, "discountRequiresOption": False}]},
+            },
+        }
+        a_la_carte_data = [
+            {
+                "id": "photos",
+                "form": {"items": [{"id": "PHbasic", "options": {"items": [{"id": "opt1", "value": False}]}}]},
+            },
+            {"id": "notary", "form": {"items": [{"id": "NTinperson"}]}},
+        ]
+        selection = {
+            "photos": {"items": {"PHbasic": True}, "options": {"PHbasic": {"opt1": False}}},
+            "notary": {"items": {"NTinperson": True}, "options": {"NTinperson": {}}},
+        }
+        # PHbasic selected but no option checked -> doesn't qualify; NTinperson always qualifies.
+        count = _discount_qualified_count(a_la_carte_data, catalog_services, selection)
+        self.assertEqual(count, 1)
+
+        selection["photos"]["options"]["PHbasic"]["opt1"] = True
+        count = _discount_qualified_count(a_la_carte_data, catalog_services, selection)
+        self.assertEqual(count, 2)
+
+    def test_discount_percent_uses_highest_qualifying_tier(self):
+        catalog_item = {"id": "LBcode", "discountEligible": True}
+        levels = [
+            {"items": 2, "percent": 20},
+            {"items": 3, "percent": 30},
+        ]
+        self.assertEqual(_discount_percent_for(catalog_item, qualified_count=1, discount_levels=levels), Decimal("0"))
+        self.assertEqual(_discount_percent_for(catalog_item, qualified_count=2, discount_levels=levels), Decimal("20"))
+        self.assertEqual(_discount_percent_for(catalog_item, qualified_count=3, discount_levels=levels), Decimal("30"))
+
+    def test_protection_only_applies_for_percent_type(self):
+        percent_service = {"order_protection_type": "percent", "order_protection_value": 10}
+        fixed_service = {"order_protection_type": "fixed", "order_protection_value": 10}
+        self.assertEqual(_service_protection_amount(percent_service, Decimal("100")), Decimal("10.00"))
+        # "fixed" is a live no-op today (frontend only ever checks the string "flat",
+        # which this catalog's OrderProtectionType never produces) — replicated as-is.
+        self.assertEqual(_service_protection_amount(fixed_service, Decimal("100")), Decimal("0"))
+
+    def test_protection_invalid_selection_forces_off(self):
+        catalog_service = {
+            "order_protection": True,
+            "order_protection_value": 10,
+            "order_protection_disabled": False,
+            "form": {"items": [{"id": "PHpremium30", "protectionInvalid": True}]},
+        }
+        self.assertFalse(_resolve_service_protection(catalog_service, ["PHpremium30"], explicit_enabled=None))
+        self.assertTrue(_resolve_service_protection(catalog_service, ["other-item"], explicit_enabled=None))
+        self.assertFalse(_resolve_service_protection(catalog_service, ["other-item"], explicit_enabled=False))

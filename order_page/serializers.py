@@ -274,6 +274,8 @@ class FormItemSerializer(serializers.ModelSerializer):
     submenuPriceChange = serializers.SerializerMethodField()
     mobileHomeDiscountValid = serializers.BooleanField(source="mobile_home_discount_valid", read_only=True)
     multiUnitValid = serializers.BooleanField(source="multi_unit_valid", read_only=True)
+    discountEligible = serializers.BooleanField(source="discount_eligible", read_only=True)
+    discountRequiresOption = serializers.BooleanField(source="discount_requires_option", read_only=True)
 
     class Meta:
         model = FormItem
@@ -289,6 +291,8 @@ class FormItemSerializer(serializers.ModelSerializer):
             "submenuPriceChange",
             "mobileHomeDiscountValid",
             "multiUnitValid",
+            "discountEligible",
+            "discountRequiresOption",
         ]
 
     def get_submenuPriceChange(self, obj):
