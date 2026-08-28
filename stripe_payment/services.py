@@ -449,8 +449,16 @@ class NotaryDashServices:
     def create_order(data):
         url = f"{BASE_URL}/api/v2/orders"
         # print("Creating order with data:", json.dumps(data, indent=4, default=str))
-        
-        response = post_with_retry(url, headers=Notary_header, json_data=data)
+
+        # retry_on_rate_limit=False: this is called synchronously from request
+        # handlers (Stripe webhook, m2m views). A blocking retry loop here can
+        # sleep past gunicorn's worker timeout and get the worker killed
+        # mid-request, aborting order processing before the caller's own
+        # PROCESS_ORDER_RETRYABLE -> fulfill_order_task fallback ever runs.
+        # Fail fast on 429 instead and let that Celery-based retry own it.
+        response = post_with_retry(
+            url, headers=Notary_header, json_data=data, retry_on_rate_limit=False
+        )
 
         if response and 200 <= response.status_code < 300:
             print("✅ Order created successfully.")
@@ -462,8 +470,11 @@ class NotaryDashServices:
     @staticmethod
     def create_products(data):
         url = f"{BASE_URL}/api/v2/companies/{data.get('client_id')}/products"
-        
-        response = post_with_retry(url, headers=Notary_header, json_data=data)
+
+        # see create_order() above for why retry_on_rate_limit=False here
+        response = post_with_retry(
+            url, headers=Notary_header, json_data=data, retry_on_rate_limit=False
+        )
 
         if response and 200 <= response.status_code < 300:
             print("✅ Products created successfully.")
