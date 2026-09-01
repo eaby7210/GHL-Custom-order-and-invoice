@@ -52,6 +52,15 @@ if NOTARY_TEST:
 else:
     NOTARY_API_KEY = config('NOTARY_LIVE_API_KEY')
 
+# Web-session fallback for when the NotaryDash API key is rate-limited -
+# approved by NotaryDash as a stopgap while they fix a bug in their own
+# API-call metering. See stripe_payment/notarydash_web.py.
+NOTARYDASH_WEB_FALLBACK_ENABLED = config(
+    'NOTARYDASH_WEB_FALLBACK_ENABLED', default=False, cast=bool
+)
+NOTARY_WEB_EMAIL = config('NOTARY_WEB_EMAIL', default=None)
+NOTARY_WEB_PASS = config('NOTARY_WEB_PASS', default=None)
+
 
 TYPEFORM_ACCESS_TOKEN = config('TYPEFORM_ACCESS_TOKEN', default=None)
 TOLT_KEY = config('TOLT_KEY', default=None)
@@ -333,6 +342,15 @@ CELERY_BEAT_SCHEDULE = {
 
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+
+# notarydash_web_call owns the single persistent NotaryDash web-session
+# login (see stripe_payment/notarydash_web.py) - must run on a dedicated
+# single-concurrency worker (celery-notarydash-web.service) so only one
+# process ever holds that browser session at a time.
+CELERY_TASK_ROUTES = {
+    'stripe_payment.tasks.notarydash_web_call': {'queue': 'notarydash_web'},
+}
+
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'

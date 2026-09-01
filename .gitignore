@@ -11,3 +11,4 @@ celerybeat-schedule
 *.log
 static
 !order_page/static
+.coverage

@@ -10,6 +10,34 @@ DEFAULT_TIMEOUT = 25
 # NotaryDash get_client_one_user — avoid hammering API for stable profile data.
 NOTARY_CLIENT_ONE_USER_CACHE_SECONDS = 15 * 24 * 60 * 60
 
+# how long to wait for the web-session fallback: covers a cold login
+# (~5-10s observed) plus one API call, comfortably under gunicorn's 400s
+# worker timeout - this bounded wait is exactly what avoids repeating the
+# failure pattern that got a request killed mid-retry (see order 12704).
+NOTARYDASH_WEB_FALLBACK_TIMEOUT = 45
+
+
+def _try_web_fallback(method, path, json_data=None):
+    """
+    Attempt a NotaryDash call via the web-session fallback (see
+    stripe_payment/notarydash_web.py) when the Bearer-key API has failed.
+
+    Returns the parsed JSON dict on success, or None on any failure -
+    including the flag being off, the task timing out, or the fallback
+    worker being down. None here means "fall through to today's existing
+    behavior", never a new failure mode.
+    """
+    if not settings.NOTARYDASH_WEB_FALLBACK_ENABLED:
+        return None
+    try:
+        from stripe_payment.tasks import notarydash_web_call
+        return notarydash_web_call.apply_async(
+            args=[method, path, json_data]
+        ).get(timeout=NOTARYDASH_WEB_FALLBACK_TIMEOUT)
+    except Exception as e:
+        print(f"⚠️ NotaryDash web-session fallback failed ({method} {path}): {e}")
+        return None
+
 def request_with_retry(url, headers, params=None, max_retries=5, delay=30, timeout=DEFAULT_TIMEOUT):
     """
     Performs GET request with automatic retry on status 429 and network errors.
@@ -311,6 +339,10 @@ class NotaryDashServices:
 
         if response.status_code == 429:
             print("❌ get_client_once: NotaryDash returned 429 Too Many Requests")
+            fallback = _try_web_fallback("GET", f"/api/v2/clients/{id}")
+            if fallback is not None:
+                print("✅ get_client_once: recovered via web-session fallback.")
+                return fallback, None
             return None, "rate_limited"
 
         if 200 <= response.status_code < 300:
@@ -400,6 +432,11 @@ class NotaryDashServices:
 
         if response.status_code == 429:
             print("❌ get_client_one_user_once: NotaryDash returned 429 Too Many Requests")
+            fallback = _try_web_fallback("GET", f"/api/v2/clients/{client_id}/users/{user_id}")
+            if fallback is not None:
+                print("✅ get_client_one_user_once: recovered via web-session fallback.")
+                cache.set(cache_key, fallback, NOTARY_CLIENT_ONE_USER_CACHE_SECONDS)
+                return fallback, None
             return None, "rate_limited"
 
         if 200 <= response.status_code < 300:
@@ -463,10 +500,14 @@ class NotaryDashServices:
         if response and 200 <= response.status_code < 300:
             print("✅ Order created successfully.")
             return response.json()
-        
+
         print(f"❌ Failed to create order: {response.status_code if response else 'No Response'} - {response.text if response else ''}")
+        fallback = _try_web_fallback("POST", "/api/v2/orders", data)
+        if fallback is not None:
+            print("✅ create_order: recovered via web-session fallback.")
+            return fallback
         return None
-        
+
     @staticmethod
     def create_products(data):
         url = f"{BASE_URL}/api/v2/companies/{data.get('client_id')}/products"
@@ -481,8 +522,13 @@ class NotaryDashServices:
             return response.json()
 
         print(f"❌ Failed to create products: {response.status_code if response else 'No Response'} - {response.text if response else ''}")
+        client_id = data.get('client_id')
+        fallback = _try_web_fallback("POST", f"/api/v2/companies/{client_id}/products", data)
+        if fallback is not None:
+            print("✅ create_products: recovered via web-session fallback.")
+            return fallback
         return None
-    
+
     @staticmethod
     def create_client(data, *, retry_on_rate_limit=True):
         url = f"{BASE_URL}/api/v2/clients"

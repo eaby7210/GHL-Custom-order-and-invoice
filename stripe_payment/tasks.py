@@ -25,6 +25,49 @@ def pull_clients():
     p.handle()
 
 
+# process-wide singleton: the one persistent NotaryDash web-session login,
+# lazily started on first use. Only ever touched from this task, which is
+# routed to the single-concurrency `notarydash_web` queue (see
+# dj_IBstripe/settings.py CELERY_TASK_ROUTES) - never call this directly
+# from a gunicorn worker or the default Celery queue.
+_notarydash_web_session = None
+
+
+def _get_notarydash_web_session():
+    global _notarydash_web_session
+    if _notarydash_web_session is None:
+        from django.conf import settings
+        from stripe_payment.notarydash_web import NDWebSession
+
+        session = NDWebSession()
+        session.login(settings.NOTARY_WEB_EMAIL, settings.NOTARY_WEB_PASS)
+        _notarydash_web_session = session
+    return _notarydash_web_session
+
+
+@shared_task(bind=True, max_retries=1)
+def notarydash_web_call(self, method, path, json_data=None):
+    """
+    Fallback transport for a NotaryDash API call via a real logged-in
+    browser session, used when the Bearer-key API is rate-limited (see
+    stripe_payment/notarydash_web.py for why this exists).
+
+    Returns the parsed JSON response dict on success, or None on any
+    failure - callers treat None exactly like a failed Bearer-key call,
+    falling through to the existing retry/refund path unchanged.
+    """
+    try:
+        session = _get_notarydash_web_session()
+        return session.call(method, path, json_data)
+    except Exception as e:
+        logger.error(f"notarydash_web_call failed ({method} {path}): {e}")
+        # drop the session so the next call re-logs-in from scratch,
+        # rather than reusing a possibly-broken browser/context
+        global _notarydash_web_session
+        _notarydash_web_session = None
+        return None
+
+
 def process_tos_for_ghl(user_id: int, contact_id: int):
     from stripe_payment.models import NotaryUser
     from core.services import ContactServices

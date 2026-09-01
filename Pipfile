@@ -26,8 +26,10 @@ django-oauth-toolkit = "*"
 requests-unixsocket = "*"
 pytz = "*"
 django-admin-rangefilter = "*"
+playwright = "*"
 
 [dev-packages]
+coverage = "*"
 
 [requires]
 python_version = "3.12"
